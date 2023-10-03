@@ -107,7 +107,7 @@ contract Portal is ReentrancyGuard {
     // ==           STAKING & UNSTAKING          ==
     // ============================================
 
-    // Update user data to the current state. Only callable by the Vault
+    // Update user data to the current state. Only callable by the Portal
     function updateAccount(address _user, uint256 _amount) private {
         // Calculate accrued creditLine since last update
         uint256 creditEarned = (accounts[_user].stakedBalance * 
@@ -134,7 +134,7 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // User stake the strategy´s principal token into the contract & redirect principal to yield source
+    // Stake the principal token into the Portal & redirect principal to yield source
     function stake(uint256 _amount) external nonReentrant {
         // Check if Portal has closed the funding phase and is active
         require(isActivePortal);
@@ -145,7 +145,7 @@ contract Portal is ReentrancyGuard {
         // Update total stake balance
         totalPrincipalStaked += _amount;
 
-        // Call function to deposit principal into yield source
+        // Deposit principal into yield source
         depositToYieldSource(_amount);
 
         // Check if user has a staking position, else initialize with this stake.
@@ -176,7 +176,7 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Serves unstaking requests
+    // Serve unstaking requests & withdraw principal from yield source
     function unstake(uint256 _amount) external nonReentrant {
         // Check if user has a stake and update user stake data
         require(accounts[msg.sender].isExist == true,"User has no stake");
@@ -214,7 +214,7 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Force unstaking via burning PortalEnergy from user wallet to decrease debt sufficiently to unstake all
+    // Force unstaking via burning PortalEnergy (token) from user wallet to decrease debt sufficiently to unstake all
     function forceUnstakeAll() external nonReentrant {
         // Check if user has a stake and update user stake data
         require(accounts[msg.sender].isExist == true,"User has no stake");
@@ -353,7 +353,7 @@ contract Portal is ReentrancyGuard {
     // ==              PSM CONVERTER             ==
     // ============================================
 
-    // handle the arbitrage conversion of tokens inside the contract for LP tokens
+    // handle the arbitrage conversion of tokens inside the contract for PSM tokens
     function convert(address _token, uint256 _minReceived) external nonReentrant {
 
         // Check that the output token is not the input token (PSM)
@@ -384,7 +384,7 @@ contract Portal is ReentrancyGuard {
     // ============================================
     
     // Allow users to deposit PSM to provide initial upfront yield
-    //@dev: Contract MUST BE OWNER of the eToken to work
+    // Contract MUST BE OWNER of the specific eToken to work
     function contributeFunding(uint256 _amount) external nonReentrant {
         require(_amount > 0, "Invalid amount");
         require(isActivePortal == false,"Funding phase concluded");
