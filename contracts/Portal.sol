@@ -9,14 +9,14 @@ import {PortalEnergy} from "./PortalEnergy.sol";
 
 
 // OPTIMISATION
-// change uint of constantProduct (huge number)
+// change uint related to constantProduct (huge number)
 
 
-// REQUIRED TO DOS:
-// Strategy-related
+// TO DOS:
+// Yield-related
 // function: depositIntoYieldSource -> deposits a certain amount into source
 // function: withdrawFromYieldSource -> withdraws a certain amount and send to user
-// function: claimFromYieldSource -> claims yield from source and redirects protocol share
+// function: claimFromYieldSource -> claims yield from source
 // function: VIEW getClaimableYield (from yield source)
 
 
@@ -99,7 +99,7 @@ contract Portal is ReentrancyGuard {
         uint256 lastUpdateTime,
         uint256 stakedBalance,
         uint256 maxStakeDebt,
-        uint256 creditLine,                                 // creditLine = stakeSurplus + maxStakeDebt - stakeDebt
+        uint256 creditLine,
         uint256 availableToWithdraw);                       // principal available to withdraw
 
 
