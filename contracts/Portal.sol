@@ -464,19 +464,6 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Mint portal energy tokens to user and decrease creditLine of user equally
-    function priv_storePortalEnergy(address _user, uint256 _amount) private nonReentrant {   
-        // Check if user has sufficient creditLine
-        require(accounts[_user].creditLine >= _amount, "Insufficient credit line");
-
-        // decrease the creditLine of user
-        accounts[_user].creditLine -= _amount;
-
-        // mint tokens to user wallet
-        PortalEnergy(portalEnergyAddress).mint(_user, _amount);
-    }
-
-
     // Burn portal energy tokens from user wallet and increase creditLine of recipient equally
     function burnPortalEnergy(address _recipient, uint256 _amount) external nonReentrant {   
         // Check if recipient has a stake position
