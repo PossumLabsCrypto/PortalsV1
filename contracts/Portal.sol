@@ -12,13 +12,13 @@ import {IRewarder} from "./interfaces/IRewarder.sol";
 
 // This contract accepts user deposits and withdrawals of a specific token.
 // The deposits are redirected to an external protocol to generate yield.
-// Yield is claimed and collected in this contract.
-// Users accrue creditLine points while staking their tokens.
-// CreditLine can be exchanged against the PSM token with the internal Liquidity Pool.
+// Yield is claimed and collected into this contract.
+// Users accrue creditLine points over time while staking their tokens.
+// CreditLine can be exchanged against the PSM token using the internal "Liquidity Pool".
 // The contract can receive PSM tokens during the funding phase and issues receipt tokens. (bToken)
 // bTokens can be redeemed against the fundingRewardPool which consists of PSM tokens.
 // The fundingRewardPool is filled over time by taking a 10% cut from the Converter.
-// The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of token XYZ.
+// The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token.
 // When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract.
 contract Portal is ReentrancyGuard {
     constructor(uint256 _fundingPhaseDuration, 
@@ -450,8 +450,9 @@ contract Portal is ReentrancyGuard {
     // handle the arbitrage conversion of tokens inside the contract for PSM tokens
     function convert(address _token, uint256 _minReceived) external nonReentrant {
 
-        // Check that the output token is not the input token (PSM)
+        // Check that the output token is not the input or stake token (PSM / HLP)
         require(_token != tokenToAcquire, "Cannot receive the input token");
+        require(_token != principalToken, "Cannot receive the stake token");
 
         // Check if sufficient output token is available in the contract (frontrun protection)
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
