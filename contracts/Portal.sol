@@ -9,16 +9,23 @@ import {IStaking} from "./interfaces/IStaking.sol";
 import {ICompounder} from "./interfaces/ICompounder.sol";
 import {IRewarder} from "./interfaces/IRewarder.sol";
 
-// This contract accepts user deposits and withdrawals of a specific token.
-// The deposits are redirected to an external protocol to generate yield.
-// Yield is claimed and collected into this contract.
-// Users accrue creditLine points over time while staking their tokens.
-// CreditLine can be exchanged against the PSM token using the internal "Liquidity Pool".
-// The contract can receive PSM tokens during the funding phase and issues receipt tokens. (bToken)
-// bTokens can be redeemed against the fundingRewardPool which consists of PSM tokens.
-// The fundingRewardPool is filled over time by taking a 10% cut from the Converter.
-// The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token.
-// When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract.
+
+
+
+/// @title Portal Contract
+/// @author Possum Labs
+/** @notice This contract accepts user deposits and withdrawals of a specific token
+* The deposits are redirected to an external protocol to generate yield
+* Yield is claimed and collected into this contract
+* Users accrue creditLine points over time while staking their tokens
+* CreditLine can be exchanged against the PSM token using the internal Liquidity Pool or minted as ERC20
+* The contract can receive PSM tokens during the funding phase and issues bTokens as receipt
+* bTokens can be redeemed against the fundingRewardPool which consists of PSM tokens
+* The fundingRewardPool is filled over time by taking a 10% cut from the Converter
+* The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token
+* When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract
+*/
+
 contract Portal is ReentrancyGuard {
     constructor(uint256 _fundingPhaseDuration, 
         uint256 _fundingExchangeRatio,
@@ -100,15 +107,20 @@ contract Portal is ReentrancyGuard {
 
     mapping(address => Account) public accounts;            // Associate users with their stake position
 
-    // Events related to the funding phase
+    // --- Events related to the funding phase ---
+
+    /// @notice Emitted when the portal is activated
+    /// @param fundingBalance The final funding balance
     event PortalActivated(address indexed, uint256 fundingBalance);
+    /// @notice Emitted when funding is received
+    /// @param amount The amount of funding received    
     event FundingReceived(address indexed, uint256 amount);
 
-    // Events related to internal exchange PSM vs. creditLine
+    // --- Events related to internal exchange PSM vs. creditLine ---
     event CreditLineBuyExecuted(address indexed, uint256 amount);
     event CreditLineSellExecuted(address indexed, uint256 amount);
 
-    // Events related to staking & unstaking
+    // --- Events related to staking & unstaking ---
     event TokenStaked(address indexed user, uint256 amountStaked);
     event TokenUnstaked(address indexed user, uint256 amountUnstaked);
     event RewardsClaimed(address[] indexed pools, address[][] rewarders, uint256 timeStamp);
@@ -151,7 +163,8 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Stake the principal token into the Portal & redirect principal to yield source
+    /// @notice Stake the principal token into the Portal & redirect principal to yield source
+    /// @param _amount The amount of tokens to stake    
     function stake(uint256 _amount) external nonReentrant {
         // Check if Portal has closed the funding phase and is active
         require(isActivePortal);
@@ -193,7 +206,8 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Serve unstaking requests & withdraw principal from yield source
+    /// @notice Serve unstaking requests & withdraw principal from yield source
+    /// @param _amount The amount of tokens to unstake
     function unstake(uint256 _amount) external nonReentrant {
         // Check if user has a stake and update user stake data
         require(accounts[msg.sender].isExist == true,"User has no stake");
@@ -231,7 +245,7 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Force unstaking via burning PortalEnergy (token) from user wallet to decrease debt sufficiently to unstake all
+    /// @notice Force unstaking via burning PortalEnergy (token) from user wallet to decrease debt sufficiently
     function forceUnstakeAll() external nonReentrant {
         // Check if user has a stake and update user stake data
         require(accounts[msg.sender].isExist == true,"User has no stake");
@@ -274,7 +288,7 @@ contract Portal is ReentrancyGuard {
     // ==      PRINCIPAL & REWARD MANAGEMENT     ==
     // ============================================
 
-    // Deposit principal into yield source
+    /// @notice Deposit principal into yield source
     function _depositToYieldSource() private {
         // Read how many principalTokens are in the contract and approve this amount
         uint256 balance = IERC20(principalToken).balanceOf(address(this));
@@ -288,7 +302,8 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Withdraw principal from yield source into this contract
+    /// @notice Withdraw principal from yield source into this contract
+    /// @param _amount The amount of tokens to withdraw
     function _withdrawFromYieldSource(uint256 _amount) private {
 
         // withdraw the staked balance from external protocol using the interface
@@ -299,7 +314,7 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Claim rewards related to HLP and HMX staked by this contract
+    /// @notice Claim rewards related to HLP and HMX staked by this contract
     function claimRewardsHLPandHMX() external {
         // generate & fill the first input array for the compounder        
         address[] memory pools = new address[](2);
@@ -332,7 +347,9 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // If the above claim function breaks in the future, use this function to claim specific rewards
+    /// @notice If the above claim function breaks in the future, use this function to claim specific rewards
+    /// @param _pools The pools to claim rewards from
+    /// @param _rewarders The rewarders to claim rewards from
     function claimRewardsManual(address[] memory _pools, address[][] memory _rewarders) external {
         // claim rewards from any staked token and any rewarder via interface
         // esHMX and DP are staked automatically, USDC or other reward token transferred to contract
@@ -352,65 +369,89 @@ contract Portal is ReentrancyGuard {
     // ==               INTERNAL LP              ==
     // ============================================
 
-    // Sell PSM into contract to top up creditLine balance
+    /// @notice Sell PSM into contract to top up creditLine balance
+    /// @dev This function allows users to sell PSM tokens to the contract to increase their credit line
+    /// @dev It checks if the user has a stake and updates the stake data
+    /// @dev It checks if the user has enough PSM tokens
+    /// @dev It updates the input token reserve and calculates the reserve of creditLine (Output)
+    /// @dev It calculates the amount of creditLine received based on the amount of PSM tokens sold
+    /// @dev It checks if the amount of creditLine received is greater than or equal to the minimum expected output
+    /// @dev It transfers the PSM tokens from the user to the contract
+    /// @dev It increases the creditLine of the user by the amount of creditLine received
+    /// @dev It emits a CreditLineBuyExecuted event
+    /// @param _amountInput The amount of PSM tokens to sell
+    /// @param _minReceived The minimum amount of creditLine to receive
     function buyCreditLine(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
-        // Check if user has a stake and update stake data
+        /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
+        /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
 
-        // Check if user has enough input tokens
+        /// @dev Require that the user has enough PSM token
         require(IERC20(tokenToAcquire).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
         
-        // Update inputToken reserve
+        /// @dev Update the input token reserve
         reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
-        // Calculate reserve of creditLine (Output)
+        /// @dev Calculate the reserve of creditLine (Output)
         reserve1 = constantProduct / reserve0;
 
-        // Calculate amount of creditLine received
+        /// @dev Calculate the amount of creditLine received based on the amount of PSM tokens sold
         uint256 amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
 
-        // Check if amount at least matches expected output
+        /// @dev Require that the amount of creditLine received is greater than or equal to the minimum expected output
         require(amountReceived >= _minReceived, "Output too small");
 
-        // transfer input tokens from user to contract
+        /// @dev Transfer the PSM tokens from the user to the contract
         IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), _amountInput);
 
-        // Increase creditLine of user
+        /// @dev Increase the creditLine of the user by the amount of creditLine received
         accounts[msg.sender].creditLine += amountReceived;
 
-        // emit event that swap was successful
+        /// @dev Emit the CreditLineBuyExecuted event with the user's address and the amount of creditLine received
         emit CreditLineBuyExecuted(msg.sender, amountReceived);
     }
 
-
+    /// @notice Sell CreditLine into contract to receive PSM
+    /// @dev This function allows users to sell their credit line to the contract to receive PSM tokens
+    /// @dev It checks if the user has a stake and updates the stake data
+    /// @dev It checks if the user has enough creditLine to sell
+    /// @dev It updates the output token reserve and calculates the reserve of creditLine (Input)
+    /// @dev It calculates the amount of output token received based on the amount of creditLine sold
+    /// @dev It checks if the amount of output token received is greater than or equal to the minimum expected output
+    /// @dev It reduces the creditLine balance of the user by the amount of creditLine sold
+    /// @dev It sends the output token to the user
+    /// @dev It emits a CreditLineSellExecuted event
+    /// @param _amountInput The amount of creditLine to sell
+    /// @param _minReceived The minimum amount of PSM tokens to receive
     function sellCreditLine(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
-        // Check if user has a stake and update stake data
+        /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
+        /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
         
-        // Check if user has enough creditLine to sell
+        /// @dev Require that the user has enough creditLine to sell
         require(accounts[msg.sender].creditLine >= _amountInput, "Insufficient balance");
 
-        // Update outputToken reserve
+        /// @dev Update the output token reserve (PSM)
         reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
-        // Calculate reserve of creditLine (Input)
+        /// @dev Calculate the reserve of creditLine (Input)
         reserve1 = constantProduct / reserve0;
 
-        // Calculate amount of outputToken received
+        /// @dev Calculate the amount of output token received based on the amount of creditLine sold
         uint256 amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
 
-        // Check if amount at least matches expected output
+        /// @dev Require that the amount of output token received is greater than or equal to the minimum expected output
         require(amountReceived >= _minReceived, "Output too small");
 
-        // reduce creditLine balance of user
+        /// @dev Reduce the creditLine balance of the user by the amount of creditLine sold
         accounts[msg.sender].creditLine -= _amountInput;
 
-        // send outputToken to user
+        /// @dev Send the output token to the user
         IERC20(tokenToAcquire).safeTransfer(msg.sender, amountReceived);
 
-        // emit event that swap was successful
+        /// @dev Emit the CreditLineSellExecuted event with the user's address and the amount of creditLine sold
         emit CreditLineSellExecuted(msg.sender, _amountInput);
     }
 
@@ -418,31 +459,39 @@ contract Portal is ReentrancyGuard {
     // ==              PSM CONVERTER             ==
     // ============================================
 
-    // handle the arbitrage conversion of tokens inside the contract for PSM tokens
+    /// @notice Handle the arbitrage conversion of tokens inside the contract for PSM tokens
+    /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
+    /// @dev It checks if the output token is not the input or stake token (PSM / HLP)
+    /// @dev It checks if sufficient output token is available in the contract for frontrun protection
+    /// @dev It transfers the input (PSM) token from the user to the contract
+    /// @dev It updates the funding reward pool balance and the tracker of collected rewards
+    /// @dev It updates the reserve0 (PSM) to keep the internal exchange price accurate
+    /// @dev It transfers the output token from the contract to the user
+    /// @param _token The token to convert
+    /// @param _minReceived The minimum amount of tokens to receive
     function convert(address _token, uint256 _minReceived) external nonReentrant {
-
-        // Check that the output token is not the input or stake token (PSM / HLP)
+        /// @dev Require that the output token is not the input or stake token (PSM / HLP)
         require(_token != tokenToAcquire, "Cannot receive the input token");
         require(_token != principalToken, "Cannot receive the stake token");
 
-        // Check if sufficient output token is available in the contract (frontrun protection)
+        /// @dev Check if sufficient output token is available in the contract for frontrun protection
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
         require (contractBalance >= _minReceived, "Not enough tokens in contract");
 
-        // Transfer input (PSM) token from user to contract
+        /// @dev Transfer the input (PSM) token from the user to the contract
         IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), amountToConvert); 
 
-        // update funding reward pool balance and the tracker of collected rewards
+        /// @dev Update the funding reward pool balance and the tracker of collected rewards
         if (IERC20(bToken).totalSupply() > 0 && fundingRewardsCollected < fundingMaxRewards) {
             uint256 newRewards = (fundingRewardShare * amountToConvert) / 100;
             fundingRewardPool += newRewards;
             fundingRewardsCollected += newRewards;
         }
 
-        // update reserve0 (PSM) to keep internal exchange price accurate
+        /// @dev Update reserve0 (PSM) to keep the internal exchange price accurate
         reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
-        // Transfer output token from contract to user
+        /// @dev Transfer the output token from the contract to the user
         IERC20(_token).safeTransfer(msg.sender, contractBalance);
     }
 
@@ -450,71 +499,101 @@ contract Portal is ReentrancyGuard {
     // ==              BOOTSTRAPPING             ==
     // ============================================
     
-    // Allow users to deposit PSM to provide initial upfront yield
-    // Contract MUST BE OWNER of the specific eToken to work
+    /// @notice Allow users to deposit PSM to provide initial upfront yield
+    /// @dev This function allows users to deposit PSM tokens during the funding phase of the contract
+    /// @dev The contract must be the owner of the specific bToken
+    /// @dev It checks if the portal is not already active and if the funding phase is ongoing before proceeding
+    /// @dev It increases the funding tracker balance by the amount of PSM deposited
+    /// @dev It calculates the amount of bTokens to be minted based on the funding reward rate
+    /// @dev It transfers the PSM tokens from the user to the contract
+    /// @dev It mints bTokens to the user and emits a FundingReceived event
+    /// @param _amount The amount of PSM to deposit
     function contributeFunding(uint256 _amount) external nonReentrant {
+        /// @dev Require that the deposit amount is greater than zero
         require(_amount > 0, "Invalid amount");
+        /// @dev Require that the funding phase is ongoing
         require(isActivePortal == false,"Funding phase concluded");
 
-        // increase the funding tracker balance
+        /// @dev Increase the funding tracker balance by the amount of PSM deposited
         fundingBalance += _amount;
 
-        // calculate the amount of bTokens to be minted
+        /// @dev Calculate the amount of bTokens to be minted based on the funding reward rate
         uint256 mintableAmount = _amount * fundingRewardRate;
 
-        // transer PSM to Contract
+        /// @dev Transfer the PSM tokens from the user to the contract
         IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), _amount); 
 
-        // mint eToken to user
+        /// @dev Mint bTokens to the user
         MintBurnToken(bToken).mint(msg.sender, mintableAmount);
 
-        // emit event that funding was received
+        /// @dev Emit the FundingReceived event with the user's address and the mintable amount
         emit FundingReceived(msg.sender, mintableAmount);
     }
 
 
-    // Calculate the current burn value of amount eTokens. Return value is amount PSM tokens
+    /// @notice Calculate the current burn value of amount bTokens. Return value is amount PSM tokens
+    /// @param _amount The amount of bTokens to burn
     function getBurnValuePsm(uint256 _amount) public view returns(uint256 burnValue) {
         burnValue = (fundingRewardPool * _amount) / IERC20(bToken).totalSupply();
         return burnValue;
     }
 
 
-    // Burn user eTokens to receive PSM
-    function burnEtokens(uint256 _amount) external nonReentrant {
+    /// @notice Burn user bTokens to receive PSM
+    /// @dev This function allows users to burn bTokens to receive PSM during the active phase of the contract
+    /// @dev It checks if the portal is active and if the burn amount is greater than zero before proceeding
+    /// @dev It calculates how many PSM the user receives based on the burn amount
+    /// @dev It burns the bTokens from the user's balance
+    /// @dev It reduces the funding reward pool by the amount of PSM payable to the user
+    /// @dev It transfers the PSM to the user
+    /// @param _amount The amount of bTokens to burn
+    function burnBtokens(uint256 _amount) external nonReentrant {
+        /// @dev Require that the burn amount is greater than zero
         require(_amount > 0, "Invalid amount");
+        /// @dev Require that the portal is active
         require(isActivePortal = true, "Portal not active");
 
-        // calculate how many PSM user receives
+        /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePsm(_amount);
 
-        // burn eTokens from user
+        /// @dev Burn the bTokens from the user's balance
         MintBurnToken(bToken).burnFrom(msg.sender, _amount);
 
-        // reduce funding reward pool by amount of PSM payable to user
+        /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
         fundingRewardPool -= amountToReceive;
 
-        // transfer PSM to user
+        /// @dev Transfer the PSM to the user
         IERC20(tokenToAcquire).safeTransfer(msg.sender, amountToReceive);
     }
 
 
-    // End the funding phase and enable normal contract functionality
+    /// @notice End the funding phase and enable normal contract functionality
+    /// @dev This function activates the portal and prepares it for normal operation
+    /// @dev It checks if the portal is not already active and if the funding phase is over before proceeding
+    /// @dev It calculates the amount of credit line to match the funding amount in the internal liquidity pool
+    /// @dev It sets the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
+    /// @dev It calculates the maximum rewards to be collected in PSM tokens over time
+    /// @dev It activates the portal and emits the PortalActivated event
+    /// @dev The PortalActivated event is emitted with the address of the contract and the funding balance
     function activatePortal() external {
+        /// @dev Require that the portal is not already active
         require(isActivePortal = false, "Portal already active");
+        /// @dev Require that the funding phase is over
         require(block.timestamp >= creationTime + fundingPhaseDuration,"Funding phase ongoing");
 
-        // calculate the amount of creditLine to match the funding amount in internal LP
+        /// @dev Calculate the amount of creditLine to match the funding amount in the internal liquidity pool
         uint256 requiredCreditLiquidity = fundingBalance * fundingExchangeRatio;
         
-        // set the constant product K
+        /// @dev Set the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
         constantProduct = fundingBalance * requiredCreditLiquidity;
 
-        // calculate the maximum rewards to be collected
+        /// @dev Calculate the maximum rewards to be collected in PSM tokens over time
         fundingMaxRewards = IERC20(bToken).totalSupply();
 
-        // activate the Portal and emit event   
+        /// @dev Activate the portal  
         isActivePortal = true;
+
+        /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
         emit PortalActivated(address(this), fundingBalance);
     }
 
@@ -522,50 +601,59 @@ contract Portal is ReentrancyGuard {
     // ==           GENERAL FUNCTIONS            ==
     // ============================================
     
-    // Mint portal energy tokens to recipient and decrease creditLine of caller equally
-    // Contract must be owner of the PortalEnergy Token
+    /// @notice Mint PortalEnergy tokens to recipient and decrease creditLine of caller equally
+    /// @dev Contract must be owner of the PortalEnergy Token
+    /// @param _recipient The recipient of the PortalEnergy tokens
+    /// @param _amount The amount of PortalEnergy tokens to mint
     function storePortalEnergy(address _recipient, uint256 _amount) external nonReentrant {   
-        // Check if caller has sufficient creditLine
+        /// @dev Require that the caller has sufficient creditLine to mint the amount of PortalEnergy tokens
         require(accounts[msg.sender].creditLine >= _amount, "Insufficient credit line");
 
-        // decrease the creditLine of caller
+        /// @dev Reduce the credit line of the caller by the amount of portal energy tokens to be minted
         accounts[msg.sender].creditLine -= _amount;
 
-        // mint tokens to recipient wallet
+        /// @dev Mint portal energy tokens to the recipient's wallet
         MintBurnToken(portalEnergy).mint(_recipient, _amount);
     }
 
 
-    // Burn portal energy tokens from user wallet and increase creditLine of recipient equally
+    /// @notice Burn PortalEnergy tokens from user wallet and increase creditLine of recipient equally
+    /// @param _recipient The recipient of the creditLine increase
+    /// @param _amount The amount of PortalEnergy tokens to burn
     function burnPortalEnergy(address _recipient, uint256 _amount) external nonReentrant {   
-        // Check if recipient has a stake position
+        /// @dev Require that the recipient has a stake position
         require(accounts[_recipient].isExist == true);
 
-        // burn tokens from caller wallet
+        /// @dev Burn PortalEnergy tokens from the caller's wallet
         MintBurnToken(portalEnergy).burnFrom(msg.sender, _amount);
 
-        // increase the creditLine of recipient
+        /// @dev Increase the credit line of the recipient by the amount of PortalEnergy tokens burned
         accounts[_recipient].creditLine += _amount;
     }
 
 
-    // Burn portal energy tokens from user wallet and increase creditLine of user equally
+    /// @notice Burn PortalEnergy tokens from user wallet and increase creditLine of user equally
+    /// @dev This function is private and can only be called internally
+    /// @param _user The user whose credit line is to be increased
+    /// @param _amount The amount of PortalEnergy tokens to burn
     function _burnPortalEnergy(address _user, uint256 _amount) private {   
-        // Check if user has a stake position
+        /// @dev Require that the user has a stake position
         require(accounts[_user].isExist == true);
 
-        // burn tokens from caller wallet
+        /// @dev Burn PortalEnergy tokens from the caller's wallet
         MintBurnToken(portalEnergy).burnFrom(_user, _amount);
 
-        // increase the creditLine of user
+        /// @dev Increase the creditLine of the user by the amount of PortalEnergy tokens burned
         accounts[_user].creditLine += _amount;
     }
 
 
-    // update the maximum lock duration up to the terminal value
+    /// @notice Update the maximum lock duration up to the terminal value
     function updateMaxLockDuration() external {
+        /// @dev Require that the lock duration can be updated        
         require(lockDurationUpdateable == true,"Lock duration cannot increase");
 
+        /// @dev Calculate new lock duration
         uint256 newValue = 2 * (block.timestamp - creationTime);
 
         if (newValue >= terminalMaxLockDuration) {
@@ -578,7 +666,10 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Simulate updating a user stake position and return the values without updating the struct
+    /// @notice Simulate updating a user stake position and return the values without updating the struct
+    /// @param _user The user whose stake position is to be updated
+    /// @param _amount The amount to add to the user's stake position
+    /// @dev Returns the simulated up-to-date user stake information
     function getUpdateAccount(address _user, uint256 _amount) public view returns(
         address user,
         uint256 lastUpdateTime,
@@ -587,23 +678,23 @@ contract Portal is ReentrancyGuard {
         uint256 creditLine,
         uint256 availableToWithdraw) {
 
-        // Calculate accrued creditLine since last update
+        /// @dev Calculate the creditLine earned since the last update
         uint256 creditEarned = (accounts[_user].stakedBalance * 
             (block.timestamp - accounts[_user].lastUpdateTime)) / secondsPerYear;
       
-        // Get the current Time Stamp
+        /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
 
-        // calculate user staked balance
+        /// @dev Calculate the user's staked balance
         stakedBalance = accounts[_user].stakedBalance + _amount;
 
-        // Update user maxStakeDebt
+        /// @dev Update the user's max stake debt
         maxStakeDebt = accounts[_user].maxStakeDebt + (_amount * maxLockDuration) / secondsPerYear;
 
-        // update user creditLine
+        /// @dev Update the user's creditLine by adding the credit earned since the last update
         creditLine = accounts[_user].creditLine + creditEarned;
 
-        // Update amount available to unstake
+        /// @dev Update the amount available to unstake based on the updated credit line and max stake debt
         if (creditLine >= maxStakeDebt) {
             availableToWithdraw = stakedBalance;
         } else {
@@ -614,29 +705,35 @@ contract Portal is ReentrancyGuard {
     }
 
 
-    // Simulate forced unstake and return the number of portal energy tokens to be burned      
+    /// @notice Simulate forced unstake and return the number of portal energy tokens to be burned      
+    /// @param _user The user whose stake position is to be updated for the simulation
+    /// @return portalEnergyToBurn Returns the number of portal energy tokens to be burned for a full unstake
     function quoteforceUnstakeAll(address _user) public view returns(uint256 portalEnergyToBurn) {
 
-        // get relevant data from simulated account update
+        /// @dev Get the relevant data from the simulated account update
         (, , , uint256 maxStakeDebt, uint256 creditLine,) = getUpdateAccount(_user,0);
 
-        // Calculate how many portal energy tokens must be burned
+        /// @dev Calculate how many portal energy tokens must be burned for a full unstake
         if(maxStakeDebt > creditLine) {
             portalEnergyToBurn = maxStakeDebt - creditLine;
         }
 
-        // return amount of portal energy to be burned for full unstake
+        /// @dev Return the amount of portal energy tokens to be burned for a full unstake
         return portalEnergyToBurn; 
     }
 
 
-    // View balance of tokens inside the contract
+    /// @notice View balance of tokens inside the contract
+    /// @param _token The token for which the balance is to be checked
+    /// @return Returns the balance of the specified token inside the contract
     function getBalanceOfToken(address _token) public view returns (uint256) {
         return IERC20(_token).balanceOf(address(this));
     }
 
 
-    // View claimable yield from a specific rewarder contract of the yield source
+    /// @notice View claimable yield from a specific rewarder contract of the yield source
+    /// @dev This function allows you to view the claimable yield from a specific rewarder contract of the yield source
+    /// @param _rewarder The rewarder contract whose pending reward is to be viewed
     function getPendingRewards(address _rewarder) public view returns(uint256 claimableReward){
 
         claimableReward = IRewarder(_rewarder).pendingReward(address(this));
