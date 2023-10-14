@@ -79,7 +79,7 @@ contract Portal is ReentrancyGuard {
     // bootstrapping related
     uint256 immutable private fundingPhaseDuration;         // seconds that the funding phase lasts before Portal can be activated
     uint256 public fundingBalance;                          // sum of all PSM funding contributions
-    uint256 public fundingRewardPool;                       // amount of PSM available for redemption against eTokens
+    uint256 public fundingRewardPool;                       // amount of PSM available for redemption against bTokens
     uint256 public fundingRewardsCollected;                 // tracker of PSM collected over time for the reward pool
     uint256 public fundingMaxRewards;                       // maximum amount of PSM to be collected for reward pool
     uint256 immutable public fundingRewardRate;             // baseline return on funding the Portal
