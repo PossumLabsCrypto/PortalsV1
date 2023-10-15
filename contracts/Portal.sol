@@ -425,10 +425,10 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the user has enough PSM token
         require(IERC20(tokenToAcquire).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
         
-        /// @dev Calculate the input token reserve (PSM)
+        /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
-        /// @dev Calculate the reserve of portalEnergy (Output)
+        /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = constantProduct / reserve0;
 
         /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
@@ -468,10 +468,10 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the user has enough portalEnergy to sell
         require(accounts[msg.sender].portalEnergy >= _amountInput, "Insufficient balance");
 
-        /// @dev Calculate the output token reserve (PSM)
+        /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
-        /// @dev Calculate the reserve of portalEnergy (Input)
+        /// @dev Calculate the reserve of portalEnergy (input)
         uint256 reserve1 = constantProduct / reserve0;
 
         /// @dev Calculate the amount of output token received based on the amount of portalEnergy sold
@@ -488,6 +488,37 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Emit the portalEnergySellExecuted event with the user's address and the amount of portalEnergy sold
         emit portalEnergySellExecuted(msg.sender, _amountInput);
+    }
+
+    /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
+    /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
+    function quoteBuyPortalEnergy(uint256 _amountInput) public view returns(uint256) { 
+        /// @dev Calculate the PSM token reserve (input)
+        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+
+        /// @dev Calculate the reserve of portalEnergy (output)
+        uint256 reserve1 = constantProduct / reserve0;
+
+        /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
+        uint256 amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
+
+        return (amountReceived);
+    }
+
+
+    /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
+    /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
+    function quoteSellPortalEnergy(uint256 _amountInput) public view returns(uint256) {
+        /// @dev Calculate the PSM token reserve (output)
+        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+
+        /// @dev Calculate the reserve of portalEnergy (input)
+        uint256 reserve1 = constantProduct / reserve0;
+
+        /// @dev Calculate the amount of PSM tokens received based on the amount of portalEnergy sold
+        uint256 amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
+
+        return (amountReceived);
     }
 
     // ============================================
