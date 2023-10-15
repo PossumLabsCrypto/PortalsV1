@@ -89,8 +89,6 @@ contract Portal is ReentrancyGuard {
 
     // exchange related
     uint256 public constantProduct;                        // the K constant of the (x*y = K) constant product formula
-    uint256 private reserve0;                              // reserve of PSM tokens for LP calculations
-    uint256 private reserve1;                              // reserve of portalEnergy for LP calculations
 
     // user related
     struct Account {                                       // contains information of user stake positions
@@ -105,12 +103,7 @@ contract Portal is ReentrancyGuard {
     mapping(address => Account) public accounts;            // Associate users with their stake position
 
     // --- Events related to the funding phase ---
-
-    /// @notice Emitted when the portal is activated
-    /// @param fundingBalance The final funding balance
     event PortalActivated(address indexed, uint256 fundingBalance);
-    /// @notice Emitted when funding is received
-    /// @param amount The amount of funding received    
     event FundingReceived(address indexed, uint256 amount);
 
     // --- Events related to internal exchange PSM vs. portalEnergy ---
@@ -288,7 +281,7 @@ contract Portal is ReentrancyGuard {
             /// @dev Require that the user has enough Portal Energy Tokens
             require(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) >= remainingDebt, "Not enough Portal Energy Tokens");
             /// @dev Burn the appropriate portalEnergyToken from the user's wallet to increase portalEnergy sufficiently
-            _burnportalEnergyToken(msg.sender, remainingDebt);
+            _burnPortalEnergyToken(msg.sender, remainingDebt);
         }
 
         /// @dev Withdraw the principal from the yield source to pay the user
@@ -423,7 +416,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergyBuyExecuted event
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
-    function buyportalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
+    function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
         /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
         /// @dev Update the stake data of the user
@@ -432,11 +425,11 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the user has enough PSM token
         require(IERC20(tokenToAcquire).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
         
-        /// @dev Update the input token reserve
-        reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        /// @dev Calculate the input token reserve (PSM)
+        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (Output)
-        reserve1 = constantProduct / reserve0;
+        uint256 reserve1 = constantProduct / reserve0;
 
         /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
         uint256 amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
@@ -466,7 +459,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergySellExecuted event
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
-    function sellportalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
+    function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
         /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
         /// @dev Update the stake data of the user
@@ -475,11 +468,11 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the user has enough portalEnergy to sell
         require(accounts[msg.sender].portalEnergy >= _amountInput, "Insufficient balance");
 
-        /// @dev Update the output token reserve (PSM)
-        reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        /// @dev Calculate the output token reserve (PSM)
+        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (Input)
-        reserve1 = constantProduct / reserve0;
+        uint256 reserve1 = constantProduct / reserve0;
 
         /// @dev Calculate the amount of output token received based on the amount of portalEnergy sold
         uint256 amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
@@ -507,7 +500,6 @@ contract Portal is ReentrancyGuard {
     /// @dev It checks if sufficient output token is available in the contract for frontrun protection
     /// @dev It transfers the input (PSM) token from the user to the contract
     /// @dev It updates the funding reward pool balance and the tracker of collected rewards
-    /// @dev It updates the reserve0 (PSM) to keep the internal exchange price accurate
     /// @dev It transfers the output token from the contract to the user
     /// @param _token The token to convert
     /// @param _minReceived The minimum amount of tokens to receive
@@ -529,9 +521,6 @@ contract Portal is ReentrancyGuard {
             fundingRewardPool += newRewards;
             fundingRewardsCollected += newRewards;
         }
-
-        /// @dev Update reserve0 (PSM) to keep the internal exchange price accurate
-        reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Transfer the output token from the contract to the user
         IERC20(_token).safeTransfer(msg.sender, contractBalance);
@@ -575,7 +564,7 @@ contract Portal is ReentrancyGuard {
 
     /// @notice Calculate the current burn value of amount bTokens. Return value is amount PSM tokens
     /// @param _amount The amount of bTokens to burn
-    function getBurnValuePsm(uint256 _amount) public view returns(uint256 burnValue) {
+    function getBurnValuePSM(uint256 _amount) public view returns(uint256 burnValue) {
         burnValue = (fundingRewardPool * _amount) / IERC20(bToken).totalSupply();
         return burnValue;
     }
@@ -596,7 +585,7 @@ contract Portal is ReentrancyGuard {
         require(isActivePortal = true, "Portal not active");
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
-        uint256 amountToReceive = getBurnValuePsm(_amount);
+        uint256 amountToReceive = getBurnValuePSM(_amount);
 
         /// @dev Burn the bTokens from the user's balance
         MintBurnToken(bToken).burnFrom(msg.sender, _amount);
@@ -678,7 +667,7 @@ contract Portal is ReentrancyGuard {
     /// @dev This function is private and can only be called internally
     /// @param _user The user whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
-    function _burnportalEnergyToken(address _user, uint256 _amount) private {   
+    function _burnPortalEnergyToken(address _user, uint256 _amount) private {   
         /// @dev Require that the user has a stake position
         require(accounts[_user].isExist == true);
 
