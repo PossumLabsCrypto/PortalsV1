@@ -613,7 +613,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the burn amount is greater than zero
         require(_amount > 0, "Invalid amount");
         /// @dev Require that the portal is active
-        require(isActivePortal = true, "Portal not active");
+        require(isActivePortal == true, "Portal not active");
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePSM(_amount);
@@ -639,7 +639,7 @@ contract Portal is ReentrancyGuard {
     /// @dev The PortalActivated event is emitted with the address of the contract and the funding balance
     function activatePortal() external {
         /// @dev Require that the portal is not already active
-        require(isActivePortal = false, "Portal already active");
+        require(isActivePortal == false, "Portal already active");
         /// @dev Require that the funding phase is over
         require(block.timestamp >= creationTime + fundingPhaseDuration,"Funding phase ongoing");
 
