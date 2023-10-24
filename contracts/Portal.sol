@@ -77,7 +77,7 @@ contract Portal is ReentrancyGuard {
     address private constant HMXdragonPointsRewarder = 0xbEDd351c62111FB7216683C2A26319743a06F273;
 
     // bootstrapping related
-    uint256 immutable private fundingPhaseDuration;         // seconds that the funding phase lasts before Portal can be activated
+    uint256 immutable public fundingPhaseDuration;         // seconds that the funding phase lasts before Portal can be activated
     uint256 public fundingBalance;                          // sum of all PSM funding contributions
     uint256 public fundingRewardPool;                       // amount of PSM available for redemption against bTokens
     uint256 public fundingRewardsCollected;                 // tracker of PSM collected over time for the reward pool
@@ -173,7 +173,7 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of tokens to stake    
     function stake(uint256 _amount) external nonReentrant {
         /// @dev Require that the Portal is active
-        require(isActivePortal);
+        require(isActivePortal, "Portal inactive");
         
         /// @dev Transfer the user's principal tokens to the contract
         IERC20(principalToken).safeTransferFrom(msg.sender, address(this), _amount);
