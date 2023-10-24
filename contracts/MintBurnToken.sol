@@ -8,12 +8,10 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
 contract MintBurnToken is ERC20, ERC20Burnable, Ownable, ERC20Permit {
     constructor(
-        address initialOwner
-    )
-        ERC20("PortalEnergy", "PE")
-        Ownable(initialOwner)
-        ERC20Permit("PortalEnergy")
-    {}
+        address initialOwner,
+        string memory name,
+        string memory symbol
+    ) ERC20(name, symbol) Ownable(initialOwner) ERC20Permit(name) {}
 
     function mint(address to, uint256 amount) public onlyOwner {
         _mint(to, amount);
