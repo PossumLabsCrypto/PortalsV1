@@ -675,8 +675,14 @@ contract Portal is ReentrancyGuard {
     /// @param _recipient The recipient of the portalEnergyToken
     /// @param _amount The amount of portalEnergyToken to mint
     function mintPortalEnergyToken(address _recipient, uint256 _amount) external nonReentrant {   
+        /// @dev Get the current portalEnergy of the user
+        (, , , , uint256 portalEnergy,) = getUpdateAccount(msg.sender,0);
+
         /// @dev Require that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
-        require(accounts[msg.sender].portalEnergy >= _amount, "Insufficient portalEnergy");
+        require(portalEnergy >= _amount, "Insufficient portalEnergy");
+
+        ///@dev Update the user´s stake data
+        _updateAccount(msg.sender,0);
 
         /// @dev Reduce the portalEnergy of the caller by the amount of portal energy tokens to be minted
         accounts[msg.sender].portalEnergy -= _amount;
@@ -691,10 +697,16 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of portalEnergyToken to burn
     function burnPortalEnergyToken(address _recipient, uint256 _amount) external nonReentrant {   
         /// @dev Require that the recipient has a stake position
-        require(accounts[_recipient].isExist == true);
+        require(accounts[_recipient].isExist == true,"recipient has no stake");
+
+        /// @dev Require that the caller has sufficient tokens to burn
+        require(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) >= _amount,"Insufficient balance");
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         MintBurnToken(portalEnergyToken).burnFrom(msg.sender, _amount);
+
+        ///@dev Update the user´s stake data
+        _updateAccount(_recipient,0);
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
