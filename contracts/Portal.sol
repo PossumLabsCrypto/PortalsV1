@@ -129,6 +129,7 @@ contract Portal is ReentrancyGuard {
     /// @notice Update user data to the current state
     /// @dev This function updates the user data to the current state
     /// @dev It calculates the accrued portalEnergy since the last update
+    /// @dev It calculates the added portalEnergy due to increased stake balance
     /// @dev It updates the last update time stamp
     /// @dev It updates the user's staked balance
     /// @dev It updates the user's maxStakeDebt
@@ -140,18 +141,24 @@ contract Portal is ReentrancyGuard {
         /// @dev Calculate the accrued portalEnergy since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance * 
             (block.timestamp - accounts[_user].lastUpdateTime)) / secondsPerYear;
-      
+
+        /// @dev Calculate the increase of portalEnergy due to balance increase
+        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / secondsPerYear;
+
         /// @dev Update the last update time stamp
         accounts[_user].lastUpdateTime = block.timestamp;
 
         /// @dev Update the user's staked balance
         accounts[_user].stakedBalance += _amount;
 
-        /// @dev Update the user's maxStakeDebt
-        accounts[_user].maxStakeDebt += (_amount * maxLockDuration) / secondsPerYear;
+        /// @dev Update the user's maxStakeDebt based on the new stake amount
+        /// @dev If the maxLockDuration increases, already staked balances will not increase their maxStakeDebt
+        /// @dev This is required so that the withdrawal math works as intended
+        /// @notice Users seeking to increase their maxStakeDebt to the fullest extent must re-stake after duration increase
+        accounts[_user].maxStakeDebt += portalEnergyIncrease;
 
         /// @dev Update the user's portalEnergy
-        accounts[_user].portalEnergy += portalEnergyEarned;
+        accounts[_user].portalEnergy += portalEnergyEarned + portalEnergyIncrease;
 
         /// @dev Update the amount available to unstake
         if (accounts[_user].portalEnergy >= accounts[_user].maxStakeDebt) {
@@ -295,7 +302,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
-        IERC20(principalToken).safeTransferFrom(msg.sender, address(this), balance);
+        IERC20(principalToken).safeTransfer(msg.sender, balance);
         
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= balance;
