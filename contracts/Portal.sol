@@ -737,6 +737,9 @@ contract Portal is ReentrancyGuard {
         /// @dev Calculate new lock duration
         uint256 newValue = 2 * (block.timestamp - creationTime);
 
+        /// @dev Require that the new value will be larger than the existing value
+        require(newValue > maxLockDuration,"Duration not ready to update");
+
         if (newValue >= terminalMaxLockDuration) {
             maxLockDuration = terminalMaxLockDuration;
             lockDurationUpdateable = false;
