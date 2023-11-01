@@ -247,6 +247,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance -= _amount;
         accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration) / secondsPerYear;
+        accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration) / secondsPerYear;
         accounts[msg.sender].availableToWithdraw -= _amount;
 
         /// @dev Update the global tracker of staked principal
