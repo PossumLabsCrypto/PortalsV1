@@ -90,7 +90,7 @@ contract Portal is ReentrancyGuard {
     uint256 public fundingRewardPool;                       // amount of PSM available for redemption against bTokens
     uint256 public fundingRewardsCollected;                 // tracker of PSM collected over time for the reward pool
     uint256 public fundingMaxRewards;                       // maximum amount of PSM to be collected for reward pool
-    bool public isActivePortal = false;                     // this will be set to true when funding phase ends.
+    bool public isActivePortal;                             // Start with false, will be set to true when funding phase ends.
 
     // exchange related
     uint256 public constantProduct;                         // the K constant of the (x*y = K) constant product formula
@@ -518,7 +518,7 @@ contract Portal is ReentrancyGuard {
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
-    function quoteBuyPortalEnergy(uint256 _amountInput) public view returns(uint256) { 
+    function quoteBuyPortalEnergy(uint256 _amountInput) external view returns(uint256) { 
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
@@ -534,7 +534,7 @@ contract Portal is ReentrancyGuard {
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
-    function quoteSellPortalEnergy(uint256 _amountInput) public view returns(uint256) {
+    function quoteSellPortalEnergy(uint256 _amountInput) external view returns(uint256) {
         /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
@@ -824,7 +824,7 @@ contract Portal is ReentrancyGuard {
     /// @notice Simulate forced unstake and return the number of portal energy tokens to be burned      
     /// @param _user The user whose stake position is to be updated for the simulation
     /// @return portalEnergyTokenToBurn Returns the number of portal energy tokens to be burned for a full unstake
-    function quoteforceUnstakeAll(address _user) public view returns(uint256 portalEnergyTokenToBurn) {
+    function quoteforceUnstakeAll(address _user) external view returns(uint256 portalEnergyTokenToBurn) {
 
         /// @dev Get the relevant data from the simulated account update
         (, , , uint256 maxStakeDebt, uint256 portalEnergy,) = getUpdateAccount(_user,0);
@@ -839,7 +839,7 @@ contract Portal is ReentrancyGuard {
     /// @notice View balance of tokens inside the contract
     /// @param _token The token for which the balance is to be checked
     /// @return Returns the balance of the specified token inside the contract
-    function getBalanceOfToken(address _token) public view returns (uint256) {
+    function getBalanceOfToken(address _token) external view returns (uint256) {
         return IERC20(_token).balanceOf(address(this));
     }
 
@@ -847,7 +847,7 @@ contract Portal is ReentrancyGuard {
     /// @notice View claimable yield from a specific rewarder contract of the yield source
     /// @dev This function allows you to view the claimable yield from a specific rewarder contract of the yield source
     /// @param _rewarder The rewarder contract whose pending reward is to be viewed
-    function getPendingRewards(address _rewarder) public view returns(uint256 claimableReward){
+    function getPendingRewards(address _rewarder) external view returns(uint256 claimableReward){
         claimableReward = IRewarder(_rewarder).pendingReward(address(this));
     }
 }
