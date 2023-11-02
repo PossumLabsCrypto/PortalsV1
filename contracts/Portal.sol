@@ -20,7 +20,16 @@ error DeadlineExpired();
 error PortalNotActive();
 error PortalAlreadyActive();
 error AccountDoesNotExist();
-
+error InsufficientToWithdraw();
+error InsufficientStake();
+error InsufficientPEtokens();
+error InsufficientBalance();
+error InvalidOutput();
+error InvalidToken();
+error InvalidAmount();
+error FundingPhaseOngoing();
+error DurationLocked();
+error DurationCannotIncrease();
 
 /// @title Portal Contract
 /// @author Possum Labs
@@ -281,8 +290,8 @@ contract Portal is ReentrancyGuard {
         _updateAccount(msg.sender,0);
 
         /// @dev Require that the amount to be unstaked is less than or equal to the available withdrawable balance and the staked balance
-        require(_amount <= accounts[msg.sender].availableToWithdraw, "Insufficient withdrawable balance");
-        require(_amount <= accounts[msg.sender].stakedBalance, "Insufficient stake balance");
+        if(_amount > accounts[msg.sender].availableToWithdraw) {revert InsufficientToWithdraw();}
+        if(_amount > accounts[msg.sender].stakedBalance) {revert InsufficientStake();}
 
         /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
         _withdrawFromYieldSource(_amount);
@@ -328,7 +337,7 @@ contract Portal is ReentrancyGuard {
             uint256 remainingDebt = accounts[msg.sender].maxStakeDebt - accounts[msg.sender].portalEnergy;
 
             /// @dev Require that the user has enough Portal Energy Tokens
-            require(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) >= remainingDebt, "Not enough Portal Energy Tokens");
+            if(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) < remainingDebt) {revert InsufficientPEtokens();}
             /// @dev Burn the appropriate portalEnergyToken from the user's wallet to increase portalEnergy sufficiently
             _burnPortalEnergyToken(msg.sender, remainingDebt);
         }
@@ -473,7 +482,7 @@ contract Portal is ReentrancyGuard {
         _updateAccount(msg.sender,0);
 
         /// @dev Require that the user has enough PSM token
-        require(IERC20(PSM_ADDRESS).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
+        if(IERC20(PSM_ADDRESS).balanceOf(msg.sender) < _amountInput) {revert InsufficientBalance();}
         
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
@@ -485,7 +494,7 @@ contract Portal is ReentrancyGuard {
         uint256 amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
 
         /// @dev Require that the amount of portalEnergy received is greater than or equal to the minimum expected output
-        require(amountReceived >= _minReceived, "Output too small");
+        if(amountReceived < _minReceived) {revert InvalidOutput();}
 
         /// @dev Transfer the PSM tokens from the user to the contract
         IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amountInput);
@@ -517,7 +526,7 @@ contract Portal is ReentrancyGuard {
         _updateAccount(msg.sender,0);
         
         /// @dev Require that the user has enough portalEnergy to sell
-        require(accounts[msg.sender].portalEnergy >= _amountInput, "Insufficient balance");
+        if(accounts[msg.sender].portalEnergy < _amountInput) {revert InsufficientBalance();}
 
         /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
@@ -529,7 +538,7 @@ contract Portal is ReentrancyGuard {
         uint256 amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
 
         /// @dev Require that the amount of output token received is greater than or equal to the minimum expected output
-        require(amountReceived >= _minReceived, "Output too small");
+        if(amountReceived < _minReceived) {revert InvalidOutput();}
 
         /// @dev Reduce the portalEnergy balance of the user by the amount of portalEnergy sold
         accounts[msg.sender].portalEnergy -= _amountInput;
@@ -587,11 +596,11 @@ contract Portal is ReentrancyGuard {
     /// @param _minReceived The minimum amount of tokens to receive
     function convert(address _token, uint256 _minReceived, uint256 _deadline) external nonReentrant {
         /// @dev Require that the output token is not the input or stake token (PSM / HLP)
-        require(_token != PSM_ADDRESS, "Cannot receive the input token");
-        require(_token != PRINCIPAL_TOKEN_ADDRESS, "Cannot receive the stake token");
+        if(_token == PSM_ADDRESS) {revert InvalidToken();}
+        if(_token == PRINCIPAL_TOKEN_ADDRESS) {revert InvalidToken();}
 
         /// @dev Require that the deadline has not expired
-        if (_deadline < block.timestamp) {revert DeadlineExpired();}
+        if(_deadline < block.timestamp) {revert DeadlineExpired();}
 
         /// @dev Check if sufficient output token is available in the contract for frontrun protection
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
@@ -626,7 +635,7 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of PSM to deposit
     function contributeFunding(uint256 _amount) external nonReentrant nonActivePortalCheck {
         /// @dev Require that the deposit amount is greater than zero
-        require(_amount > 0, "Invalid amount");
+        if(_amount == 0) {revert InvalidAmount();}
 
         /// @dev Increase the funding tracker balance by the amount of PSM deposited
         fundingBalance += _amount;
@@ -662,7 +671,7 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of bTokens to burn
     function burnBtokens(uint256 _amount) external nonReentrant activePortalCheck {
         /// @dev Require that the burn amount is greater than zero
-        require(_amount > 0, "Invalid amount");
+        if(_amount == 0) {revert InvalidAmount();}
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePSM(_amount);
@@ -691,7 +700,7 @@ contract Portal is ReentrancyGuard {
     /// @dev The PortalActivated event is emitted with the address of the contract and the funding balance
     function activatePortal() external nonActivePortalCheck {
         /// @dev Require that the funding phase is over
-        require(block.timestamp >= CREATION_TIME + FUNDING_PHASE_DURATION,"Funding phase ongoing");
+        if(block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {revert FundingPhaseOngoing();}
 
         /// @dev Calculate the amount of portalEnergy to match the funding amount in the internal liquidity pool
         uint256 requiredPortalEnergyLiquidity = fundingBalance * FUNDING_EXCHANGE_RATIO;
@@ -722,7 +731,7 @@ contract Portal is ReentrancyGuard {
         (, , , , uint256 portalEnergy,) = getUpdateAccount(msg.sender,0);
 
         /// @dev Require that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
-        require(portalEnergy >= _amount, "Insufficient portalEnergy");
+        if(portalEnergy < _amount) {revert InsufficientBalance();}
 
         ///@dev Update the user´s stake data
         _updateAccount(msg.sender,0);
@@ -743,10 +752,10 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of portalEnergyToken to burn
     function burnPortalEnergyToken(address _recipient, uint256 _amount) external nonReentrant {   
         /// @dev Require that the recipient has a stake position
-        require(accounts[_recipient].isExist == true,"recipient has no stake");
+        if(accounts[_recipient].isExist == false) {revert AccountDoesNotExist();}
 
         /// @dev Require that the caller has sufficient tokens to burn
-        require(portalEnergyToken.balanceOf(address(msg.sender)) >= _amount,"Insufficient balance");
+        if(portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {revert InsufficientBalance();}
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(msg.sender, _amount);
@@ -779,15 +788,15 @@ contract Portal is ReentrancyGuard {
     /// @notice Update the maximum lock duration up to the terminal value
     function updateMaxLockDuration() external {
         /// @dev Require that the lock duration can be updated        
-        require(lockDurationUpdateable == true,"Lock duration cannot increase");
+        if(lockDurationUpdateable == false) {revert DurationLocked();}
 
         /// @dev Calculate new lock duration
         uint256 newValue = 2 * (block.timestamp - CREATION_TIME);
 
         /// @dev Require that the new value will be larger than the existing value
-        require(newValue > maxLockDuration,"Duration not ready to update");
+        if(newValue <= maxLockDuration) {revert DurationCannotIncrease();}
 
-        if (newValue >= TERMINAL_MAX_LOCK_DURATION) {
+        if(newValue >= TERMINAL_MAX_LOCK_DURATION) {
             maxLockDuration = TERMINAL_MAX_LOCK_DURATION;
             lockDurationUpdateable = false;
         } 
