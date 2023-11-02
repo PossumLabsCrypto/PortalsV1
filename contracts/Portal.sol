@@ -746,8 +746,6 @@ contract Portal is ReentrancyGuard {
     /// @param _user The user whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {   
-        /// @dev Require that the user has a stake position
-        require(accounts[_user].isExist == true);
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(_user, _amount);
