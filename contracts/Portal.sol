@@ -624,7 +624,6 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of bTokens to burn
     function getBurnValuePSM(uint256 _amount) public view returns(uint256 burnValue) {
         burnValue = (fundingRewardPool * _amount) / bToken.totalSupply();
-        return burnValue;
     }
 
 
@@ -795,6 +794,9 @@ contract Portal is ReentrancyGuard {
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance * 
             (block.timestamp - accounts[_user].lastUpdateTime)) / secondsPerYear;
       
+        /// @dev Calculate the increase of portalEnergy due to balance increase
+        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / secondsPerYear;
+
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
 
@@ -805,7 +807,7 @@ contract Portal is ReentrancyGuard {
         maxStakeDebt = accounts[_user].maxStakeDebt + (_amount * maxLockDuration) / secondsPerYear;
 
         /// @dev Update the user's portalEnergy by adding the portalEnergy earned since the last update
-        portalEnergy = accounts[_user].portalEnergy + portalEnergyEarned;
+        portalEnergy = accounts[_user].portalEnergy + portalEnergyEarned + portalEnergyIncrease;
 
         /// @dev Update the amount available to unstake based on the updated portalEnergy and max stake debt
         if (portalEnergy >= maxStakeDebt) {
@@ -814,7 +816,8 @@ contract Portal is ReentrancyGuard {
             availableToWithdraw = (stakedBalance * portalEnergy) / maxStakeDebt;
         }
 
-    return (_user, lastUpdateTime, stakedBalance, maxStakeDebt, portalEnergy, availableToWithdraw);
+        /// @dev Set the user for the return values
+        user = _user;
     }
 
 
@@ -830,9 +833,6 @@ contract Portal is ReentrancyGuard {
         if(maxStakeDebt > portalEnergy) {
             portalEnergyTokenToBurn = maxStakeDebt - portalEnergy;
         }
-
-        /// @dev Return the amount of portal energy tokens to be burned for a full unstake
-        return portalEnergyTokenToBurn; 
     }
 
 
@@ -848,9 +848,6 @@ contract Portal is ReentrancyGuard {
     /// @dev This function allows you to view the claimable yield from a specific rewarder contract of the yield source
     /// @param _rewarder The rewarder contract whose pending reward is to be viewed
     function getPendingRewards(address _rewarder) public view returns(uint256 claimableReward){
-
         claimableReward = IRewarder(_rewarder).pendingReward(address(this));
-
-        return(claimableReward);
     }
 }
