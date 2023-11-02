@@ -26,24 +26,24 @@ import {IRewarder} from "./interfaces/IRewarder.sol";
 error DeadlineExpired();
 
 contract Portal is ReentrancyGuard {
-    constructor(uint256 _fundingPhaseDuration, 
-        uint256 _fundingExchangeRatio,
-        uint256 _fundingRewardRate, 
-        address _principalToken,
-        address _tokenToAcquire, 
-        uint256 _terminalMaxLockDuration, 
-        uint256 _amountToConvert)
+    constructor(uint256 _FUNDING_PHASE_DURATION, 
+        uint256 _FUNDING_EXCHANGE_RATIO,
+        uint256 _FUNDING_REWARD_RATE, 
+        address _PRINCIPAL_TOKEN_ADDRESS,
+        address _PSM_ADDRESS, 
+        uint256 _TERMINAL_MAX_LOCK_DURATION, 
+        uint256 _AMOUNT_TO_CONVERT)
         {
-            fundingPhaseDuration = _fundingPhaseDuration;
-            fundingExchangeRatio = _fundingExchangeRatio;
-            fundingRewardRate = _fundingRewardRate;
-            principalToken = _principalToken;
+            FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
+            FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
+            FUNDING_REWARD_RATE = _FUNDING_REWARD_RATE;
+            PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
             bToken = new MintBurnToken(address(this),"bToken","BT");
             portalEnergyToken = new MintBurnToken(address(this),"Portal Energy","PE");
-            tokenToAcquire = _tokenToAcquire;
-            terminalMaxLockDuration = _terminalMaxLockDuration;
-            amountToConvert = _amountToConvert;
-            creationTime = block.timestamp;
+            PSM_ADDRESS = _PSM_ADDRESS;
+            TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
+            AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
+            CREATION_TIME = block.timestamp;
     }
 
     // ============================================
@@ -54,51 +54,49 @@ contract Portal is ReentrancyGuard {
     // general
     MintBurnToken bToken;                                   // the receipt token from bootstrapping
     MintBurnToken portalEnergyToken;                        // the ERC20 representation of portalEnergy
-    
-    //address immutable public bToken;                        // address of the bToken which is the receipt token from bootstrapping
-    //address immutable public portalEnergyToken;             // address of portalEnergyToken, the ERC20 representation of portalEnergy
-    address immutable public tokenToAcquire;                // address of PSM token
-    uint256 immutable public amountToConvert;               // constant amount of PSM tokens required to withdraw yield in the contract
-    uint256 immutable public terminalMaxLockDuration;       // terminal maximum lock duration of user´s balance in seconds
-    uint256 immutable public creationTime;                  // time stamp of deployment
-    uint256 constant private secondsPerYear = 31536000;     // seconds in a 365 day year
+
+    address immutable public PSM_ADDRESS;                   // address of PSM token
+    uint256 immutable public AMOUNT_TO_CONVERT;             // constant amount of PSM tokens required to withdraw yield in the contract
+    uint256 immutable public TERMINAL_MAX_LOCK_DURATION;    // terminal maximum lock duration of a user´s balance in seconds
+    uint256 immutable public CREATION_TIME;                 // time stamp of deployment
+    uint256 constant private SECONDS_PER_YEAR = 31536000;   // seconds in a 365 day year
     uint256 public maxLockDuration = 7776000;               // starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
     uint256 public totalPrincipalStaked;                    // shows how much principal is staked by all users combined
     bool private lockDurationUpdateable = true;             // flag to signal if the lock duration can still be updated
 
     // principal management related
-    address immutable public principalToken;                // address of the token accepted by the strategy as deposit (HLP)
-    address payable private constant compounderAddress = payable (0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
+    address immutable public PRINCIPAL_TOKEN_ADDRESS;        // address of the token accepted by the strategy as deposit (HLP)
+    address payable private constant COMPOUNDER_ADDRESS = payable (0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
 
-    address payable private constant HLPstakingAddress = payable (0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
-    address private constant HLPprotocolRewarder = 0x665099B3e59367f02E5f9e039C3450E31c338788;
-    address private constant HLPemissionsRewarder = 0x6D2c18B559C5343CB0703bB55AADB5f22152cC32;
+    address payable private constant HLP_STAKING = payable (0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
+    address private constant HLP_PROTOCOL_REWARDER = 0x665099B3e59367f02E5f9e039C3450E31c338788;
+    address private constant HLP_EMISSIONS_REWARDER = 0x6D2c18B559C5343CB0703bB55AADB5f22152cC32;
 
-    address private constant HMXstakingAddress = 0x92E586B8D4Bf59f4001604209A292621c716539a;
-    address private constant HMXprotocolRewarder = 0xB698829C4C187C85859AD2085B24f308fC1195D3;
-    address private constant HMXemissionsRewarder = 0x94c22459b145F012F1c6791F2D729F7a22c44764;
-    address private constant HMXdragonPointsRewarder = 0xbEDd351c62111FB7216683C2A26319743a06F273;
+    address private constant HMX_STAKING = 0x92E586B8D4Bf59f4001604209A292621c716539a;
+    address private constant HMX_PROTOCOL_REWARDER = 0xB698829C4C187C85859AD2085B24f308fC1195D3;
+    address private constant HMX_EMISSIONS_REWARDER = 0x94c22459b145F012F1c6791F2D729F7a22c44764;
+    address private constant HMX_DRAGONPOINTS_REWARDER = 0xbEDd351c62111FB7216683C2A26319743a06F273;
 
     uint256 private constant HMX_TIMESTAMP = 1689206400;
     uint256 private constant HMX_NUMBER = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
 
     // bootstrapping related
-    uint256 immutable public fundingPhaseDuration;         // seconds that the funding phase lasts before Portal can be activated
+    uint256 immutable public FUNDING_PHASE_DURATION;        // seconds that the funding phase lasts before Portal can be activated
+    uint256 immutable public FUNDING_REWARD_RATE;           // baseline return on funding the Portal
+    uint256 immutable private FUNDING_EXCHANGE_RATIO;       // amount of portalEnergy per PSM for calculating k during funding process
+    uint256 constant public FUNDING_REWARD_SHARE = 10;      // 10% of yield goes to the funding pool until investors are paid back
     uint256 public fundingBalance;                          // sum of all PSM funding contributions
     uint256 public fundingRewardPool;                       // amount of PSM available for redemption against bTokens
     uint256 public fundingRewardsCollected;                 // tracker of PSM collected over time for the reward pool
     uint256 public fundingMaxRewards;                       // maximum amount of PSM to be collected for reward pool
-    uint256 immutable public fundingRewardRate;             // baseline return on funding the Portal
-    uint256 immutable private fundingExchangeRatio;         // amount of portalEnergy per PSM for calculating k during funding process
-    uint256 constant public fundingRewardShare = 10;        // 10% of yield goes to the funding pool until investors are paid back
     bool public isActivePortal = false;                     // this will be set to true when funding phase ends.
 
     // exchange related
-    uint256 public constantProduct;                        // the K constant of the (x*y = K) constant product formula
+    uint256 public constantProduct;                         // the K constant of the (x*y = K) constant product formula
 
     // user related
-    struct Account {                                       // contains information of user stake positions
+    struct Account {                                        // contains information of user stake positions
         bool isExist;
         uint256 lastUpdateTime;
         uint256 stakedBalance;
@@ -152,10 +150,10 @@ contract Portal is ReentrancyGuard {
     function _updateAccount(address _user, uint256 _amount) private {
         /// @dev Calculate the accrued portalEnergy since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance * 
-            (block.timestamp - accounts[_user].lastUpdateTime)) / secondsPerYear;
+            (block.timestamp - accounts[_user].lastUpdateTime)) / SECONDS_PER_YEAR;
 
         /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / secondsPerYear;
+        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / SECONDS_PER_YEAR;
 
         /// @dev Update the last update time stamp
         accounts[_user].lastUpdateTime = block.timestamp;
@@ -195,7 +193,7 @@ contract Portal is ReentrancyGuard {
         require(isActivePortal, "Portal inactive");
         
         /// @dev Transfer the user's principal tokens to the contract
-        IERC20(principalToken).safeTransferFrom(msg.sender, address(this), _amount);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
         
         /// @dev Update the total stake balance
         totalPrincipalStaked += _amount;
@@ -209,7 +207,7 @@ contract Portal is ReentrancyGuard {
             _updateAccount(msg.sender, _amount);
         } 
         else {
-            uint256 maxStakeDebt = (_amount * maxLockDuration) / secondsPerYear;
+            uint256 maxStakeDebt = (_amount * maxLockDuration) / SECONDS_PER_YEAR;
             uint256 availableToWithdraw = _amount;
             uint256 portalEnergy = maxStakeDebt;
             
@@ -258,15 +256,15 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance -= _amount;
-        accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration) / secondsPerYear;
-        accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration) / secondsPerYear;
+        accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
+        accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
         accounts[msg.sender].availableToWithdraw -= _amount;
 
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= _amount;
 
         /// @dev Send the principal tokens to the user
-        IERC20(principalToken).safeTransfer(msg.sender, _amount);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, _amount);
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
@@ -311,11 +309,11 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
         accounts[msg.sender].maxStakeDebt = 0;
-        accounts[msg.sender].portalEnergy -= (balance * maxLockDuration) / secondsPerYear;
+        accounts[msg.sender].portalEnergy -= (balance * maxLockDuration) / SECONDS_PER_YEAR;
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
-        IERC20(principalToken).safeTransfer(msg.sender, balance);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, balance);
         
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= balance;
@@ -340,11 +338,11 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits an Event that tokens have been staked
     function _depositToYieldSource() private {
         /// @dev Read how many principalTokens are in the contract and approve this amount
-        uint256 balance = IERC20(principalToken).balanceOf(address(this));
-        IERC20(principalToken).approve(HLPstakingAddress, balance);
+        uint256 balance = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, balance);
 
         /// @dev Transfer the approved balance to the external protocol using the interface
-        IStaking(HLPstakingAddress).deposit(address(this), balance);
+        IStaking(HLP_STAKING).deposit(address(this), balance);
 
         /// @dev Emit an event that tokens have been staked for the user
         emit TokenStaked(msg.sender, balance);
@@ -359,7 +357,7 @@ contract Portal is ReentrancyGuard {
     function _withdrawFromYieldSource(uint256 _amount) private {
 
         /// @dev Withdraw the staked balance from external protocol using the interface
-        IStaking(HLPstakingAddress).withdraw(_amount);
+        IStaking(HLP_STAKING).withdraw(_amount);
 
         /// @dev Emit and event that tokens have been unstaked for the user
         emit TokenUnstaked(msg.sender, _amount);
@@ -373,23 +371,23 @@ contract Portal is ReentrancyGuard {
     function claimRewardsHLPandHMX() external {
         /// @dev Initialize the first input array for the compounder and assign values
         address[] memory pools = new address[](2);
-        pools[0] = HLPstakingAddress;
-        pools[1] = HMXstakingAddress;
+        pools[0] = HLP_STAKING;
+        pools[1] = HMX_STAKING;
 
         /// @dev Initialize the second input array for the compounder and assign values    
         address[][] memory rewarders = new address[][](2);
         rewarders[0] = new address[](2);
-        rewarders[0][0] = HLPprotocolRewarder;
-        rewarders[0][1] = HLPemissionsRewarder;
+        rewarders[0][0] = HLP_PROTOCOL_REWARDER;
+        rewarders[0][1] = HLP_EMISSIONS_REWARDER;
 
         rewarders[1] = new address[](3);
-        rewarders[1][0] = HMXprotocolRewarder;
-        rewarders[1][1] = HMXemissionsRewarder;
-        rewarders[1][2] = HMXdragonPointsRewarder;
+        rewarders[1][0] = HMX_PROTOCOL_REWARDER;
+        rewarders[1][1] = HMX_EMISSIONS_REWARDER;
+        rewarders[1][2] = HMX_DRAGONPOINTS_REWARDER;
 
         /// @dev Claim rewards from HLP and HMX staking via the interface
         /// @dev esHMX and DP rewards are staked automatically, USDC is transferred to contract
-        ICompounder(compounderAddress).compound(
+        ICompounder(COMPOUNDER_ADDRESS).compound(
             pools,
             rewarders,
             HMX_TIMESTAMP,
@@ -408,7 +406,7 @@ contract Portal is ReentrancyGuard {
     function claimRewardsManual(address[] memory _pools, address[][] memory _rewarders) external {
         /// @dev claim rewards from any staked token and any rewarder via interface
         /// @dev esHMX and DP rewards are staked automatically, USDC or other reward tokens are transferred to contract
-        ICompounder(compounderAddress).compound(
+        ICompounder(COMPOUNDER_ADDRESS).compound(
             _pools,
             _rewarders,
             HMX_TIMESTAMP,
@@ -447,10 +445,10 @@ contract Portal is ReentrancyGuard {
         _updateAccount(msg.sender,0);
 
         /// @dev Require that the user has enough PSM token
-        require(IERC20(tokenToAcquire).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
+        require(IERC20(PSM_ADDRESS).balanceOf(msg.sender) >= _amountInput, "Insufficient balance");
         
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = constantProduct / reserve0;
@@ -462,7 +460,7 @@ contract Portal is ReentrancyGuard {
         require(amountReceived >= _minReceived, "Output too small");
 
         /// @dev Transfer the PSM tokens from the user to the contract
-        IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), _amountInput);
+        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amountInput);
 
         /// @dev Increase the portalEnergy of the user by the amount of portalEnergy received
         accounts[msg.sender].portalEnergy += amountReceived;
@@ -497,7 +495,7 @@ contract Portal is ReentrancyGuard {
         require(accounts[msg.sender].portalEnergy >= _amountInput, "Insufficient balance");
 
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (input)
         uint256 reserve1 = constantProduct / reserve0;
@@ -512,7 +510,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].portalEnergy -= _amountInput;
 
         /// @dev Send the output token to the user
-        IERC20(tokenToAcquire).safeTransfer(msg.sender, amountReceived);
+        IERC20(PSM_ADDRESS).safeTransfer(msg.sender, amountReceived);
 
         /// @dev Emit the portalEnergySellExecuted event with the user's address and the amount of portalEnergy sold
         emit PortalEnergySellExecuted(msg.sender, _amountInput);
@@ -522,7 +520,7 @@ contract Portal is ReentrancyGuard {
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
     function quoteBuyPortalEnergy(uint256 _amountInput) public view returns(uint256) { 
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = constantProduct / reserve0;
@@ -538,7 +536,7 @@ contract Portal is ReentrancyGuard {
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
     function quoteSellPortalEnergy(uint256 _amountInput) public view returns(uint256) {
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(tokenToAcquire).balanceOf(address(this)) - fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (input)
         uint256 reserve1 = constantProduct / reserve0;
@@ -564,8 +562,8 @@ contract Portal is ReentrancyGuard {
     /// @param _minReceived The minimum amount of tokens to receive
     function convert(address _token, uint256 _minReceived, uint256 _deadline) external nonReentrant {
         /// @dev Require that the output token is not the input or stake token (PSM / HLP)
-        require(_token != tokenToAcquire, "Cannot receive the input token");
-        require(_token != principalToken, "Cannot receive the stake token");
+        require(_token != PSM_ADDRESS, "Cannot receive the input token");
+        require(_token != PRINCIPAL_TOKEN_ADDRESS, "Cannot receive the stake token");
 
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
@@ -575,11 +573,11 @@ contract Portal is ReentrancyGuard {
         require (contractBalance >= _minReceived, "Not enough tokens in contract");
 
         /// @dev Transfer the input (PSM) token from the user to the contract
-        IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), amountToConvert); 
+        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), AMOUNT_TO_CONVERT); 
 
         /// @dev Update the funding reward pool balance and the tracker of collected rewards
         if (bToken.totalSupply() > 0 && fundingRewardsCollected < fundingMaxRewards) {
-            uint256 newRewards = (fundingRewardShare * amountToConvert) / 100;
+            uint256 newRewards = (FUNDING_REWARD_SHARE * AMOUNT_TO_CONVERT) / 100;
             fundingRewardPool += newRewards;
             fundingRewardsCollected += newRewards;
         }
@@ -611,10 +609,10 @@ contract Portal is ReentrancyGuard {
         fundingBalance += _amount;
 
         /// @dev Calculate the amount of bTokens to be minted based on the funding reward rate
-        uint256 mintableAmount = _amount * fundingRewardRate;
+        uint256 mintableAmount = _amount * FUNDING_REWARD_RATE;
 
         /// @dev Transfer the PSM tokens from the user to the contract
-        IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), _amount); 
+        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount); 
 
         /// @dev Mint bTokens to the user
         bToken.mint(msg.sender, mintableAmount);
@@ -655,7 +653,7 @@ contract Portal is ReentrancyGuard {
         fundingRewardPool -= amountToReceive;
 
         /// @dev Transfer the PSM to the user
-        IERC20(tokenToAcquire).safeTransfer(msg.sender, amountToReceive);
+        IERC20(PSM_ADDRESS).safeTransfer(msg.sender, amountToReceive);
 
         /// @dev Event that informs about burn amount and received PSM by the caller
         emit RewardsRedeemed(address(msg.sender), _amount, amountToReceive);
@@ -674,10 +672,10 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the portal is not already active
         require(isActivePortal == false, "Portal already active");
         /// @dev Require that the funding phase is over
-        require(block.timestamp >= creationTime + fundingPhaseDuration,"Funding phase ongoing");
+        require(block.timestamp >= CREATION_TIME + FUNDING_PHASE_DURATION,"Funding phase ongoing");
 
         /// @dev Calculate the amount of portalEnergy to match the funding amount in the internal liquidity pool
-        uint256 requiredPortalEnergyLiquidity = fundingBalance * fundingExchangeRatio;
+        uint256 requiredPortalEnergyLiquidity = fundingBalance * FUNDING_EXCHANGE_RATIO;
         
         /// @dev Set the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
         constantProduct = fundingBalance * requiredPortalEnergyLiquidity;
@@ -765,13 +763,13 @@ contract Portal is ReentrancyGuard {
         require(lockDurationUpdateable == true,"Lock duration cannot increase");
 
         /// @dev Calculate new lock duration
-        uint256 newValue = 2 * (block.timestamp - creationTime);
+        uint256 newValue = 2 * (block.timestamp - CREATION_TIME);
 
         /// @dev Require that the new value will be larger than the existing value
         require(newValue > maxLockDuration,"Duration not ready to update");
 
-        if (newValue >= terminalMaxLockDuration) {
-            maxLockDuration = terminalMaxLockDuration;
+        if (newValue >= TERMINAL_MAX_LOCK_DURATION) {
+            maxLockDuration = TERMINAL_MAX_LOCK_DURATION;
             lockDurationUpdateable = false;
         } 
         else if (newValue > maxLockDuration) {
@@ -794,10 +792,10 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Calculate the portalEnergy earned since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance * 
-            (block.timestamp - accounts[_user].lastUpdateTime)) / secondsPerYear;
+            (block.timestamp - accounts[_user].lastUpdateTime)) / SECONDS_PER_YEAR;
       
         /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / secondsPerYear;
+        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / SECONDS_PER_YEAR;
 
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
@@ -806,7 +804,7 @@ contract Portal is ReentrancyGuard {
         stakedBalance = accounts[_user].stakedBalance + _amount;
 
         /// @dev Update the user's max stake debt
-        maxStakeDebt = accounts[_user].maxStakeDebt + (_amount * maxLockDuration) / secondsPerYear;
+        maxStakeDebt = accounts[_user].maxStakeDebt + (_amount * maxLockDuration) / SECONDS_PER_YEAR;
 
         /// @dev Update the user's portalEnergy by adding the portalEnergy earned since the last update
         portalEnergy = accounts[_user].portalEnergy + portalEnergyEarned + portalEnergyIncrease;
