@@ -29,9 +29,7 @@ contract Portal is ReentrancyGuard {
     constructor(uint256 _fundingPhaseDuration, 
         uint256 _fundingExchangeRatio,
         uint256 _fundingRewardRate, 
-        address _principalToken, 
-        address _bToken, 
-        address _portalEnergyToken, 
+        address _principalToken,
         address _tokenToAcquire, 
         uint256 _terminalMaxLockDuration, 
         uint256 _amountToConvert)
@@ -40,8 +38,8 @@ contract Portal is ReentrancyGuard {
             fundingExchangeRatio = _fundingExchangeRatio;
             fundingRewardRate = _fundingRewardRate;
             principalToken = _principalToken;
-            bToken = _bToken;
-            portalEnergyToken = _portalEnergyToken;
+            bToken = new MintBurnToken(address(this),"bToken","BT");
+            portalEnergyToken = new MintBurnToken(address(this),"Portal Energy","PE");
             tokenToAcquire = _tokenToAcquire;
             terminalMaxLockDuration = _terminalMaxLockDuration;
             amountToConvert = _amountToConvert;
@@ -54,8 +52,11 @@ contract Portal is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // general
-    address immutable public bToken;                        // address of the bToken which is the receipt token from bootstrapping
-    address immutable public portalEnergyToken;             // address of portalEnergyToken, the ERC20 representation of portalEnergy
+    MintBurnToken bToken;                                   // the receipt token from bootstrapping
+    MintBurnToken portalEnergyToken;                        // the ERC20 representation of portalEnergy
+    
+    //address immutable public bToken;                        // address of the bToken which is the receipt token from bootstrapping
+    //address immutable public portalEnergyToken;             // address of portalEnergyToken, the ERC20 representation of portalEnergy
     address immutable public tokenToAcquire;                // address of PSM token
     uint256 immutable public amountToConvert;               // constant amount of PSM tokens required to withdraw yield in the contract
     uint256 immutable public terminalMaxLockDuration;       // terminal maximum lock duration of user´s balance in seconds
@@ -556,7 +557,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the output token is not the input or stake token (PSM / HLP)
         require(_token != tokenToAcquire, "Cannot receive the input token");
         require(_token != principalToken, "Cannot receive the stake token");
-        
+
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
@@ -568,7 +569,7 @@ contract Portal is ReentrancyGuard {
         IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), amountToConvert); 
 
         /// @dev Update the funding reward pool balance and the tracker of collected rewards
-        if (IERC20(bToken).totalSupply() > 0 && fundingRewardsCollected < fundingMaxRewards) {
+        if (bToken.totalSupply() > 0 && fundingRewardsCollected < fundingMaxRewards) {
             uint256 newRewards = (fundingRewardShare * amountToConvert) / 100;
             fundingRewardPool += newRewards;
             fundingRewardsCollected += newRewards;
@@ -607,7 +608,7 @@ contract Portal is ReentrancyGuard {
         IERC20(tokenToAcquire).safeTransferFrom(msg.sender, address(this), _amount); 
 
         /// @dev Mint bTokens to the user
-        MintBurnToken(bToken).mint(msg.sender, mintableAmount);
+        bToken.mint(msg.sender, mintableAmount);
 
         /// @dev Emit the FundingReceived event with the user's address and the mintable amount
         emit FundingReceived(msg.sender, mintableAmount);
@@ -617,7 +618,7 @@ contract Portal is ReentrancyGuard {
     /// @notice Calculate the current burn value of amount bTokens. Return value is amount PSM tokens
     /// @param _amount The amount of bTokens to burn
     function getBurnValuePSM(uint256 _amount) public view returns(uint256 burnValue) {
-        burnValue = (fundingRewardPool * _amount) / IERC20(bToken).totalSupply();
+        burnValue = (fundingRewardPool * _amount) / bToken.totalSupply();
         return burnValue;
     }
 
@@ -640,7 +641,7 @@ contract Portal is ReentrancyGuard {
         uint256 amountToReceive = getBurnValuePSM(_amount);
 
         /// @dev Burn the bTokens from the user's balance
-        MintBurnToken(bToken).burnFrom(msg.sender, _amount);
+        bToken.burnFrom(msg.sender, _amount);
 
         /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
         fundingRewardPool -= amountToReceive;
@@ -671,7 +672,7 @@ contract Portal is ReentrancyGuard {
         constantProduct = fundingBalance * requiredPortalEnergyLiquidity;
 
         /// @dev Calculate the maximum rewards to be collected in PSM tokens over time
-        fundingMaxRewards = IERC20(bToken).totalSupply();
+        fundingMaxRewards = bToken.totalSupply();
 
         /// @dev Activate the portal  
         isActivePortal = true;
@@ -702,7 +703,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].portalEnergy -= _amount;
 
         /// @dev Mint portal energy tokens to the recipient's wallet
-        MintBurnToken(portalEnergyToken).mint(_recipient, _amount);
+        portalEnergyToken.mint(_recipient, _amount);
     }
 
 
@@ -714,10 +715,10 @@ contract Portal is ReentrancyGuard {
         require(accounts[_recipient].isExist == true,"recipient has no stake");
 
         /// @dev Require that the caller has sufficient tokens to burn
-        require(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) >= _amount,"Insufficient balance");
+        require(portalEnergyToken.balanceOf(address(msg.sender)) >= _amount,"Insufficient balance");
 
         /// @dev Burn portalEnergyToken from the caller's wallet
-        MintBurnToken(portalEnergyToken).burnFrom(msg.sender, _amount);
+        portalEnergyToken.burnFrom(msg.sender, _amount);
 
         ///@dev Update the user´s stake data
         _updateAccount(_recipient,0);
@@ -736,7 +737,7 @@ contract Portal is ReentrancyGuard {
         require(accounts[_user].isExist == true);
 
         /// @dev Burn portalEnergyToken from the caller's wallet
-        MintBurnToken(portalEnergyToken).burnFrom(_user, _amount);
+        portalEnergyToken.burnFrom(_user, _amount);
 
         /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
         accounts[_user].portalEnergy += _amount;
