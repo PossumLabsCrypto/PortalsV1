@@ -108,10 +108,15 @@ contract Portal is ReentrancyGuard {
     // --- Events related to the funding phase ---
     event PortalActivated(address indexed, uint256 fundingBalance);
     event FundingReceived(address indexed, uint256 amount);
+    event RewardsRedeemed(address indexed, uint256 amountBurned, uint256 amountReceived);
 
     // --- Events related to internal exchange PSM vs. portalEnergy ---
     event portalEnergyBuyExecuted(address indexed, uint256 amount);
     event portalEnergySellExecuted(address indexed, uint256 amount);
+
+    // --- Events related to minting and burning portalEnergyToken ---
+    event portalEnergyMinted(address indexed, address recipient, uint256 amount);
+    event portalEnergyBurned(address indexed, address recipient, uint256 amount);
 
     // --- Events related to staking & unstaking ---
     event TokenStaked(address indexed user, uint256 amountStaked);
@@ -648,6 +653,9 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Transfer the PSM to the user
         IERC20(tokenToAcquire).safeTransfer(msg.sender, amountToReceive);
+
+        /// @dev Event that informs about burn amount and received PSM by the caller
+        emit RewardsRedeemed(address(msg.sender), _amount, amountToReceive);
     }
 
 
@@ -704,6 +712,9 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Mint portal energy tokens to the recipient's wallet
         portalEnergyToken.mint(_recipient, _amount);
+
+        /// @dev Emit the event that the ERC20 representation has been minted to recipient
+        emit portalEnergyMinted(address(msg.sender), _recipient, _amount);
     }
 
 
@@ -725,6 +736,9 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
+
+        /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
+        emit portalEnergyMinted(address(msg.sender), _recipient, _amount);
     }
 
 
