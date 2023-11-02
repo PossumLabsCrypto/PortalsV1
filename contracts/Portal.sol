@@ -23,6 +23,8 @@ import {IRewarder} from "./interfaces/IRewarder.sol";
 * When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract
 */
 
+error DeadlineExpired();
+
 contract Portal is ReentrancyGuard {
     constructor(uint256 _fundingPhaseDuration, 
         uint256 _fundingExchangeRatio,
@@ -424,9 +426,13 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergyBuyExecuted event
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
-    function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
+    function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant {
         /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
+
+        /// @dev Require that the deadline has not expired
+        if (_deadline < block.timestamp) {revert DeadlineExpired();}
+
         /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
 
@@ -467,9 +473,13 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergySellExecuted event
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
-    function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived) external nonReentrant {
+    function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant {
         /// @dev Require that the user has a stake
         require(accounts[msg.sender].isExist == true,"User has no stake");
+
+        /// @dev Require that the deadline has not expired
+        if (_deadline < block.timestamp) {revert DeadlineExpired();}
+
         /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
         
@@ -542,10 +552,13 @@ contract Portal is ReentrancyGuard {
     /// @dev It transfers the output token from the contract to the user
     /// @param _token The token to convert
     /// @param _minReceived The minimum amount of tokens to receive
-    function convert(address _token, uint256 _minReceived) external nonReentrant {
+    function convert(address _token, uint256 _minReceived, uint256 _deadline) external nonReentrant {
         /// @dev Require that the output token is not the input or stake token (PSM / HLP)
         require(_token != tokenToAcquire, "Cannot receive the input token");
         require(_token != principalToken, "Cannot receive the stake token");
+        
+        /// @dev Require that the deadline has not expired
+        if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
         /// @dev Check if sufficient output token is available in the contract for frontrun protection
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
