@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.22;
+pragma solidity 0.8.22;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -8,6 +8,19 @@ import {MintBurnToken} from "./MintBurnToken.sol";
 import {IStaking} from "./interfaces/IStaking.sol";
 import {ICompounder} from "./interfaces/ICompounder.sol";
 import {IRewarder} from "./interfaces/IRewarder.sol";
+
+
+
+
+// ============================================
+// ==          CUSTOM ERROR MESSAGES         ==
+// ============================================
+
+error DeadlineExpired();
+error PortalNotActive();
+error PortalAlreadyActive();
+error AccountDoesNotExist();
+
 
 /// @title Portal Contract
 /// @author Possum Labs
@@ -23,7 +36,7 @@ import {IRewarder} from "./interfaces/IRewarder.sol";
 * When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract
 */
 
-error DeadlineExpired();
+
 
 contract Portal is ReentrancyGuard {
     constructor(uint256 _FUNDING_PHASE_DURATION, 
@@ -133,6 +146,31 @@ contract Portal is ReentrancyGuard {
         uint256 availableToWithdraw);                       // principal available to withdraw
 
     // ============================================
+    // ==               MODIFIERS                ==
+    // ============================================
+    modifier activePortalCheck() {
+        if (!isActivePortal) {
+            revert PortalNotActive();
+        }
+        _;
+    }
+
+    modifier nonActivePortalCheck() {
+        if (isActivePortal) {
+        revert PortalAlreadyActive();
+        }
+        _;
+    }
+
+    modifier existingAccount() {
+        if (!accounts[msg.sender].isExist) {
+            revert AccountDoesNotExist();
+        }
+        _;
+    }
+
+
+    // ============================================
     // ==           STAKING & UNSTAKING          ==
     // ============================================
 
@@ -188,10 +226,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It checks if the user has a staking position, else it initializes a new stake
     /// @dev It emits an event with the updated stake information
     /// @param _amount The amount of tokens to stake    
-    function stake(uint256 _amount) external nonReentrant {
-        /// @dev Require that the Portal is active
-        require(isActivePortal, "Portal inactive");
-        
+    function stake(uint256 _amount) external nonReentrant activePortalCheck {
         /// @dev Transfer the user's principal tokens to the contract
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
         
@@ -241,9 +276,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It sends the principal tokens to the user
     /// @dev It emits an event with the updated stake information
     /// @param _amount The amount of tokens to unstake
-    function unstake(uint256 _amount) external nonReentrant {
-        /// @dev Require that the user has a stake
-        require(accounts[msg.sender].isExist == true,"User has no stake");
+    function unstake(uint256 _amount) external nonReentrant existingAccount {
         /// @dev Update the user's stake data
         _updateAccount(msg.sender,0);
 
@@ -285,9 +318,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It updates the user's information
     /// @dev It sends the full stake balance to the user
     /// @dev It emits an event with the updated stake information
-    function forceUnstakeAll() external nonReentrant {
-        /// @dev Require that the user has a stake
-        require(accounts[msg.sender].isExist == true,"User has no stake");
+    function forceUnstakeAll() external nonReentrant existingAccount {
         /// @dev Update the user's stake data
         _updateAccount(msg.sender,0);
 
@@ -434,10 +465,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergyBuyExecuted event
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
-    function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant {
-        /// @dev Require that the user has a stake
-        require(accounts[msg.sender].isExist == true,"User has no stake");
-
+    function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
@@ -481,10 +509,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits a portalEnergySellExecuted event
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
-    function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant {
-        /// @dev Require that the user has a stake
-        require(accounts[msg.sender].isExist == true,"User has no stake");
-
+    function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
@@ -599,11 +624,9 @@ contract Portal is ReentrancyGuard {
     /// @dev It transfers the PSM tokens from the user to the contract
     /// @dev It mints bTokens to the user and emits a FundingReceived event
     /// @param _amount The amount of PSM to deposit
-    function contributeFunding(uint256 _amount) external nonReentrant {
+    function contributeFunding(uint256 _amount) external nonReentrant nonActivePortalCheck {
         /// @dev Require that the deposit amount is greater than zero
         require(_amount > 0, "Invalid amount");
-        /// @dev Require that the funding phase is ongoing
-        require(isActivePortal == false,"Funding phase concluded");
 
         /// @dev Increase the funding tracker balance by the amount of PSM deposited
         fundingBalance += _amount;
@@ -637,11 +660,9 @@ contract Portal is ReentrancyGuard {
     /// @dev It reduces the funding reward pool by the amount of PSM payable to the user
     /// @dev It transfers the PSM to the user
     /// @param _amount The amount of bTokens to burn
-    function burnBtokens(uint256 _amount) external nonReentrant {
+    function burnBtokens(uint256 _amount) external nonReentrant activePortalCheck {
         /// @dev Require that the burn amount is greater than zero
         require(_amount > 0, "Invalid amount");
-        /// @dev Require that the portal is active
-        require(isActivePortal == true, "Portal not active");
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePSM(_amount);
@@ -668,9 +689,7 @@ contract Portal is ReentrancyGuard {
     /// @dev It calculates the maximum rewards to be collected in PSM tokens over time
     /// @dev It activates the portal and emits the PortalActivated event
     /// @dev The PortalActivated event is emitted with the address of the contract and the funding balance
-    function activatePortal() external {
-        /// @dev Require that the portal is not already active
-        require(isActivePortal == false, "Portal already active");
+    function activatePortal() external nonActivePortalCheck {
         /// @dev Require that the funding phase is over
         require(block.timestamp >= CREATION_TIME + FUNDING_PHASE_DURATION,"Funding phase ongoing");
 
