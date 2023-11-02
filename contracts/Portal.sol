@@ -79,6 +79,10 @@ contract Portal is ReentrancyGuard {
     address private constant HMXemissionsRewarder = 0x94c22459b145F012F1c6791F2D729F7a22c44764;
     address private constant HMXdragonPointsRewarder = 0xbEDd351c62111FB7216683C2A26319743a06F273;
 
+    uint256 private constant HMX_TIMESTAMP = 1689206400;
+    uint256 private constant HMX_NUMBER = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
+
+
     // bootstrapping related
     uint256 immutable public fundingPhaseDuration;         // seconds that the funding phase lasts before Portal can be activated
     uint256 public fundingBalance;                          // sum of all PSM funding contributions
@@ -111,12 +115,12 @@ contract Portal is ReentrancyGuard {
     event RewardsRedeemed(address indexed, uint256 amountBurned, uint256 amountReceived);
 
     // --- Events related to internal exchange PSM vs. portalEnergy ---
-    event portalEnergyBuyExecuted(address indexed, uint256 amount);
-    event portalEnergySellExecuted(address indexed, uint256 amount);
+    event PortalEnergyBuyExecuted(address indexed, uint256 amount);
+    event PortalEnergySellExecuted(address indexed, uint256 amount);
 
     // --- Events related to minting and burning portalEnergyToken ---
-    event portalEnergyMinted(address indexed, address recipient, uint256 amount);
-    event portalEnergyBurned(address indexed, address recipient, uint256 amount);
+    event PortalEnergyMinted(address indexed, address recipient, uint256 amount);
+    event PortalEnergyBurned(address indexed, address recipient, uint256 amount);
 
     // --- Events related to staking & unstaking ---
     event TokenStaked(address indexed user, uint256 amountStaked);
@@ -388,8 +392,8 @@ contract Portal is ReentrancyGuard {
         ICompounder(compounderAddress).compound(
             pools,
             rewarders,
-            1689206400,
-            115792089237316195423570985008687907853269984665640564039457584007913129639935,
+            HMX_TIMESTAMP,
+            HMX_NUMBER,
             new uint256[](0)
         );
 
@@ -407,8 +411,8 @@ contract Portal is ReentrancyGuard {
         ICompounder(compounderAddress).compound(
             _pools,
             _rewarders,
-            1689206400,
-            115792089237316195423570985008687907853269984665640564039457584007913129639935,
+            HMX_TIMESTAMP,
+            HMX_NUMBER,
             new uint256[](0)
         );
 
@@ -464,7 +468,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].portalEnergy += amountReceived;
 
         /// @dev Emit the portalEnergyBuyExecuted event with the user's address and the amount of portalEnergy received
-        emit portalEnergyBuyExecuted(msg.sender, amountReceived);
+        emit PortalEnergyBuyExecuted(msg.sender, amountReceived);
     }
 
     /// @notice Sell portalEnergy into contract to receive PSM
@@ -511,7 +515,7 @@ contract Portal is ReentrancyGuard {
         IERC20(tokenToAcquire).safeTransfer(msg.sender, amountReceived);
 
         /// @dev Emit the portalEnergySellExecuted event with the user's address and the amount of portalEnergy sold
-        emit portalEnergySellExecuted(msg.sender, _amountInput);
+        emit PortalEnergySellExecuted(msg.sender, _amountInput);
     }
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
@@ -713,7 +717,7 @@ contract Portal is ReentrancyGuard {
         portalEnergyToken.mint(_recipient, _amount);
 
         /// @dev Emit the event that the ERC20 representation has been minted to recipient
-        emit portalEnergyMinted(address(msg.sender), _recipient, _amount);
+        emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
     }
 
 
@@ -737,7 +741,7 @@ contract Portal is ReentrancyGuard {
         accounts[_recipient].portalEnergy += _amount;
 
         /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
-        emit portalEnergyMinted(address(msg.sender), _recipient, _amount);
+        emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
     }
 
 
