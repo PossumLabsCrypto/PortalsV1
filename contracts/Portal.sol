@@ -10,12 +10,9 @@ import {ICompounder} from "./interfaces/ICompounder.sol";
 import {IRewarder} from "./interfaces/IRewarder.sol";
 
 
-
-
 // ============================================
 // ==          CUSTOM ERROR MESSAGES         ==
 // ============================================
-
 error DeadlineExpired();
 error PortalNotActive();
 error PortalAlreadyActive();
@@ -44,8 +41,6 @@ error DurationCannotIncrease();
 * The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token
 * When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract
 */
-
-
 
 contract Portal is ReentrancyGuard {
     constructor(uint256 _FUNDING_PHASE_DURATION, 
@@ -102,7 +97,6 @@ contract Portal is ReentrancyGuard {
     uint256 private constant HMX_TIMESTAMP = 1689206400;
     uint256 private constant HMX_NUMBER = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
-
     // bootstrapping related
     uint256 immutable public FUNDING_PHASE_DURATION;        // seconds that the funding phase lasts before Portal can be activated
     uint256 immutable public FUNDING_REWARD_RATE;           // baseline return on funding the Portal
@@ -126,7 +120,6 @@ contract Portal is ReentrancyGuard {
         uint256 portalEnergy;
         uint256 availableToWithdraw;
     }
-
     mapping(address => Account) public accounts;            // Associate users with their stake position
 
     // --- Events related to the funding phase ---
@@ -178,11 +171,9 @@ contract Portal is ReentrancyGuard {
         _;
     }
 
-
     // ============================================
     // ==           STAKING & UNSTAKING          ==
     // ============================================
-
     /// @notice Update user data to the current state
     /// @dev This function updates the user data to the current state
     /// @dev It calculates the accrued portalEnergy since the last update
@@ -370,7 +361,6 @@ contract Portal is ReentrancyGuard {
     // ============================================
     // ==      PRINCIPAL & REWARD MANAGEMENT     ==
     // ============================================
-
     /// @notice Deposit principal into yield source
     /// @dev This function deposits principal tokens from the Portal into the external protocol
     /// @dev It approves the amount of tokens to be transferred
@@ -461,7 +451,6 @@ contract Portal is ReentrancyGuard {
     // ============================================
     // ==               INTERNAL LP              ==
     // ============================================
-
     /// @notice Sell PSM into contract to top up portalEnergy balance
     /// @dev This function allows users to sell PSM tokens to the contract to increase their portalEnergy
     /// @dev It checks if the user has a stake and updates the stake data
@@ -505,6 +494,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Emit the portalEnergyBuyExecuted event with the user's address and the amount of portalEnergy received
         emit PortalEnergyBuyExecuted(msg.sender, amountReceived);
     }
+
 
     /// @notice Sell portalEnergy into contract to receive PSM
     /// @dev This function allows users to sell their portalEnergy to the contract to receive PSM tokens
@@ -550,6 +540,7 @@ contract Portal is ReentrancyGuard {
         emit PortalEnergySellExecuted(msg.sender, _amountInput);
     }
 
+
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
     function quoteBuyPortalEnergy(uint256 _amountInput) external view returns(uint256) { 
@@ -584,7 +575,6 @@ contract Portal is ReentrancyGuard {
     // ============================================
     // ==              PSM CONVERTER             ==
     // ============================================
-
     /// @notice Handle the arbitrage conversion of tokens inside the contract for PSM tokens
     /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
     /// @dev It checks if the output token is not the input or stake token (PSM / HLP)
@@ -623,7 +613,6 @@ contract Portal is ReentrancyGuard {
     // ============================================
     // ==              BOOTSTRAPPING             ==
     // ============================================
-    
     /// @notice Allow users to deposit PSM to provide initial upfront yield
     /// @dev This function allows users to deposit PSM tokens during the funding phase of the contract
     /// @dev The contract must be the owner of the specific bToken
@@ -721,7 +710,6 @@ contract Portal is ReentrancyGuard {
     // ============================================
     // ==           GENERAL FUNCTIONS            ==
     // ============================================
-    
     /// @notice Mint portalEnergyToken to recipient and decrease portalEnergy of caller equally
     /// @dev Contract must be owner of the portalEnergyToken
     /// @param _recipient The recipient of the portalEnergyToken
