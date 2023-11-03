@@ -784,7 +784,7 @@ contract Portal is ReentrancyGuard {
         portalEnergyToken.burnFrom(msg.sender, _amount);
 
         /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
-        emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
+        emit PortalEnergyBurned(address(msg.sender), _recipient, _amount);
     }
 
 
