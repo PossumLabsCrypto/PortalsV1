@@ -22,11 +22,12 @@ error InsufficientStake();
 error InsufficientPEtokens();
 error InsufficientBalance();
 error InvalidOutput();
+error InvalidInput();
 error InvalidToken();
-error InvalidAmount();
 error FundingPhaseOngoing();
 error DurationLocked();
 error DurationCannotIncrease();
+
 
 /// @title Portal Contract
 /// @author Possum Labs
@@ -51,11 +52,19 @@ contract Portal is ReentrancyGuard {
         uint256 _TERMINAL_MAX_LOCK_DURATION, 
         uint256 _AMOUNT_TO_CONVERT)
         {
+            if (_FUNDING_PHASE_DURATION < 259200 || _FUNDING_PHASE_DURATION > 2592000) {revert InvalidInput();}
+            if (_FUNDING_EXCHANGE_RATIO == 0) {revert InvalidInput();}
+            if (_FUNDING_REWARD_RATE == 0) {revert InvalidInput();}
+            if(_PRINCIPAL_TOKEN_ADDRESS == address(0)) {revert InvalidInput();}
+            if(_PSM_ADDRESS == address(0)) {revert InvalidInput();}
+            if (_TERMINAL_MAX_LOCK_DURATION < maxLockDuration) {revert InvalidInput();}
+            if (_AMOUNT_TO_CONVERT == 0) {revert InvalidInput();}
+
             FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
             FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
             FUNDING_REWARD_RATE = _FUNDING_REWARD_RATE;
             PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
-            bToken = new MintBurnToken(address(this),"bToken","BT");
+            bToken = new MintBurnToken(address(this),"bHLP","bHLP");
             portalEnergyToken = new MintBurnToken(address(this),"Portal Energy","PE");
             PSM_ADDRESS = _PSM_ADDRESS;
             TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
@@ -227,16 +236,10 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits an event with the updated stake information
     /// @param _amount The amount of tokens to stake    
     function stake(uint256 _amount) external nonReentrant activePortalCheck {
-        /// @dev Transfer the user's principal tokens to the contract
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
-        
-        /// @dev Update the total stake balance
-        totalPrincipalStaked += _amount;
+        /// @dev Require that the staked amount is greater than zero
+        if (_amount == 0) {revert InvalidInput();}
 
-        /// @dev Deposit the principal into the yield source (external protocol)
-        _depositToYieldSource();
-
-        /// @dev Check if the user has a staking position, else initialize a new stake
+        /// @dev Check if the user has a staking account and update, else initialize a new account
         if(accounts[msg.sender].isExist == true){
             /// @dev Update the user's stake info
             _updateAccount(msg.sender, _amount);
@@ -253,7 +256,16 @@ contract Portal is ReentrancyGuard {
                 portalEnergy,
                 availableToWithdraw);     
         }
-        
+
+        /// @dev Update the total stake balance
+        totalPrincipalStaked += _amount;
+
+        /// @dev Transfer the user's principal tokens to the contract
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
+
+        /// @dev Deposit the principal into the yield source (external protocol)
+        _depositToYieldSource();
+
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
         accounts[msg.sender].lastUpdateTime,
@@ -464,13 +476,13 @@ contract Portal is ReentrancyGuard {
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
     function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
+        /// @dev Require that the input amount is greater than zero
+        if (_amountInput == 0) {revert InvalidInput();}
+        
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
-        /// @dev Update the stake data of the user
-        _updateAccount(msg.sender,0);
-
-        /// @dev Require that the user has enough PSM token
+        /// @dev Require that the user has enough PSM token to sell
         if(IERC20(PSM_ADDRESS).balanceOf(msg.sender) < _amountInput) {revert InsufficientBalance();}
         
         /// @dev Calculate the PSM token reserve (input)
@@ -485,11 +497,14 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if(amountReceived < _minReceived) {revert InvalidOutput();}
 
-        /// @dev Transfer the PSM tokens from the user to the contract
-        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amountInput);
+        /// @dev Update the stake data of the user
+        _updateAccount(msg.sender,0);
 
         /// @dev Increase the portalEnergy of the user by the amount of portalEnergy received
         accounts[msg.sender].portalEnergy += amountReceived;
+
+        /// @dev Transfer the PSM tokens from the user to the contract
+        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amountInput);
 
         /// @dev Emit the portalEnergyBuyExecuted event with the user's address and the amount of portalEnergy received
         emit PortalEnergyBuyExecuted(msg.sender, amountReceived);
@@ -509,6 +524,9 @@ contract Portal is ReentrancyGuard {
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
     function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
+        /// @dev Require that the input amount is greater than zero
+        if (_amountInput == 0) {revert InvalidInput();}        
+        
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
@@ -585,16 +603,18 @@ contract Portal is ReentrancyGuard {
     /// @param _token The token to convert
     /// @param _minReceived The minimum amount of tokens to receive
     function convert(address _token, uint256 _minReceived, uint256 _deadline) external nonReentrant {
-        /// @dev Require that the output token is not the input or stake token (PSM / HLP)
+        /// @dev Require that the output token is a valid address and not the input or stake token (PSM / HLP)
         if(_token == PSM_ADDRESS) {revert InvalidToken();}
         if(_token == PRINCIPAL_TOKEN_ADDRESS) {revert InvalidToken();}
+        if(_token == address(0)) {revert InvalidToken();}
 
         /// @dev Require that the deadline has not expired
         if(_deadline < block.timestamp) {revert DeadlineExpired();}
 
         /// @dev Check if sufficient output token is available in the contract for frontrun protection
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
-        require (contractBalance >= _minReceived, "Not enough tokens in contract");
+        if(contractBalance < _minReceived) {revert InvalidOutput();}
+        if(contractBalance == 0)  {revert InvalidOutput();}
 
         /// @dev Transfer the input (PSM) token from the user to the contract
         IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), AMOUNT_TO_CONVERT); 
@@ -624,13 +644,13 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of PSM to deposit
     function contributeFunding(uint256 _amount) external nonReentrant nonActivePortalCheck {
         /// @dev Require that the deposit amount is greater than zero
-        if(_amount == 0) {revert InvalidAmount();}
-
-        /// @dev Increase the funding tracker balance by the amount of PSM deposited
-        fundingBalance += _amount;
+        if(_amount == 0) {revert InvalidInput();}
 
         /// @dev Calculate the amount of bTokens to be minted based on the funding reward rate
         uint256 mintableAmount = _amount * FUNDING_REWARD_RATE;
+
+        /// @dev Increase the funding tracker balance by the amount of PSM deposited
+        fundingBalance += _amount;
 
         /// @dev Transfer the PSM tokens from the user to the contract
         IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount); 
@@ -660,7 +680,7 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of bTokens to burn
     function burnBtokens(uint256 _amount) external nonReentrant activePortalCheck {
         /// @dev Require that the burn amount is greater than zero
-        if(_amount == 0) {revert InvalidAmount();}
+        if(_amount == 0) {revert InvalidInput();}
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePSM(_amount);
@@ -715,13 +735,19 @@ contract Portal is ReentrancyGuard {
     /// @param _recipient The recipient of the portalEnergyToken
     /// @param _amount The amount of portalEnergyToken to mint
     function mintPortalEnergyToken(address _recipient, uint256 _amount) external nonReentrant {   
+        /// @dev Require that the minted amount is greater than zero
+        if (_amount == 0) {revert InvalidInput();}  
+
+        /// @dev Require that the recipient is not the zero-address
+        if (_recipient == address(0)) {revert InvalidInput();}
+        
         /// @dev Get the current portalEnergy of the user
         (, , , , uint256 portalEnergy,) = getUpdateAccount(msg.sender,0);
 
         /// @dev Require that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
         if(portalEnergy < _amount) {revert InsufficientBalance();}
 
-        ///@dev Update the user´s stake data
+        /// @dev Update the user´s stake data
         _updateAccount(msg.sender,0);
 
         /// @dev Reduce the portalEnergy of the caller by the amount of portal energy tokens to be minted
@@ -739,20 +765,23 @@ contract Portal is ReentrancyGuard {
     /// @param _recipient The recipient of the portalEnergy increase
     /// @param _amount The amount of portalEnergyToken to burn
     function burnPortalEnergyToken(address _recipient, uint256 _amount) external nonReentrant {   
+        /// @dev Require that the burned amount is greater than zero
+        if (_amount == 0) {revert InvalidInput();}  
+        
         /// @dev Require that the recipient has a stake position
         if(accounts[_recipient].isExist == false) {revert AccountDoesNotExist();}
 
         /// @dev Require that the caller has sufficient tokens to burn
         if(portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {revert InsufficientBalance();}
 
-        /// @dev Burn portalEnergyToken from the caller's wallet
-        portalEnergyToken.burnFrom(msg.sender, _amount);
-
-        ///@dev Update the user´s stake data
+        ///@dev Update the recipient´s stake data
         _updateAccount(_recipient,0);
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
+
+        /// @dev Burn portalEnergyToken from the caller's wallet
+        portalEnergyToken.burnFrom(msg.sender, _amount);
 
         /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
         emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
