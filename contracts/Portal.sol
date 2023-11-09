@@ -128,6 +128,7 @@ contract Portal is ReentrancyGuard {
     struct Account {                                        // contains information of user stake positions
         bool isExist;
         uint256 lastUpdateTime;
+        uint256 lastMaxLockDuration;
         uint256 stakedBalance;
         uint256 maxStakeDebt;
         uint256 portalEnergy;
@@ -155,6 +156,7 @@ contract Portal is ReentrancyGuard {
 
     event StakePositionUpdated(address indexed user, 
         uint256 lastUpdateTime,
+        uint256 lastMaxLockDuration,
         uint256 stakedBalance,
         uint256 maxStakeDebt,
         uint256 portalEnergy,
@@ -204,7 +206,8 @@ contract Portal is ReentrancyGuard {
             (block.timestamp - accounts[_user].lastUpdateTime)) / SECONDS_PER_YEAR;
 
         /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / SECONDS_PER_YEAR;
+        uint256 portalEnergyIncrease = (accounts[_user].stakedBalance * (maxLockDuration - 
+            accounts[_user].lastMaxLockDuration) + (_amount * maxLockDuration)) / SECONDS_PER_YEAR;
 
         /// @dev Update the last update time stamp
         accounts[_user].lastUpdateTime = block.timestamp;
@@ -254,7 +257,8 @@ contract Portal is ReentrancyGuard {
             uint256 portalEnergy = maxStakeDebt;
             
             accounts[msg.sender] = Account(true, 
-                block.timestamp, 
+                block.timestamp,
+                maxLockDuration, 
                 _amount, 
                 maxStakeDebt, 
                 portalEnergy,
@@ -273,6 +277,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
         accounts[msg.sender].lastUpdateTime,
+        accounts[msg.sender].lastMaxLockDuration,
         accounts[msg.sender].stakedBalance,
         accounts[msg.sender].maxStakeDebt, 
         accounts[msg.sender].portalEnergy, 
@@ -318,6 +323,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
         accounts[msg.sender].lastUpdateTime,
+        accounts[msg.sender].lastMaxLockDuration,
         accounts[msg.sender].stakedBalance,
         accounts[msg.sender].maxStakeDebt, 
         accounts[msg.sender].portalEnergy,
@@ -368,6 +374,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
         accounts[msg.sender].lastUpdateTime,
+        accounts[msg.sender].lastMaxLockDuration,
         accounts[msg.sender].stakedBalance,
         accounts[msg.sender].maxStakeDebt, 
         accounts[msg.sender].portalEnergy,
@@ -746,7 +753,7 @@ contract Portal is ReentrancyGuard {
         if (_recipient == address(0)) {revert InvalidInput();}
         
         /// @dev Get the current portalEnergy of the user
-        (, , , , uint256 portalEnergy,) = getUpdateAccount(msg.sender,0);
+        (, , , , , uint256 portalEnergy,) = getUpdateAccount(msg.sender,0);
 
         /// @dev Require that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
         if(portalEnergy < _amount) {revert InsufficientBalance();}
@@ -834,6 +841,7 @@ contract Portal is ReentrancyGuard {
     function getUpdateAccount(address _user, uint256 _amount) public view returns(
         address user,
         uint256 lastUpdateTime,
+        uint256 lastMaxLockDuration,
         uint256 stakedBalance,
         uint256 maxStakeDebt,
         uint256 portalEnergy,
@@ -844,10 +852,14 @@ contract Portal is ReentrancyGuard {
             (block.timestamp - accounts[_user].lastUpdateTime)) / SECONDS_PER_YEAR;
       
         /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = (_amount * maxLockDuration) / SECONDS_PER_YEAR;
+        uint256 portalEnergyIncrease = (accounts[_user].stakedBalance * (maxLockDuration - 
+            accounts[_user].lastMaxLockDuration) + (_amount * maxLockDuration)) / SECONDS_PER_YEAR;
 
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
+
+        /// @dev Get the last maxLockDuration
+        lastMaxLockDuration = accounts[_user].lastMaxLockDuration;
 
         /// @dev Calculate the user's staked balance
         stakedBalance = accounts[_user].stakedBalance + _amount;
@@ -876,7 +888,7 @@ contract Portal is ReentrancyGuard {
     function quoteforceUnstakeAll(address _user) external view returns(uint256 portalEnergyTokenToBurn) {
 
         /// @dev Get the relevant data from the simulated account update
-        (, , , uint256 maxStakeDebt, uint256 portalEnergy,) = getUpdateAccount(_user,0);
+        (, , , , uint256 maxStakeDebt, uint256 portalEnergy,) = getUpdateAccount(_user,0);
 
         /// @dev Calculate how many portal energy tokens must be burned for a full unstake
         if(maxStakeDebt > portalEnergy) {
