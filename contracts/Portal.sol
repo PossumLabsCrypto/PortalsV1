@@ -48,15 +48,19 @@ contract Portal is ReentrancyGuard {
         uint256 _FUNDING_EXCHANGE_RATIO,
         uint256 _FUNDING_REWARD_RATE, 
         address _PRINCIPAL_TOKEN_ADDRESS,
-        address _PSM_ADDRESS, 
+        address _PSM_ADDRESS,
+        address _B_TOKEN,
+        address _PORTAL_ENERGY,
         uint256 _TERMINAL_MAX_LOCK_DURATION, 
         uint256 _AMOUNT_TO_CONVERT)
         {
             if (_FUNDING_PHASE_DURATION < 259200 || _FUNDING_PHASE_DURATION > 2592000) {revert InvalidInput();}
             if (_FUNDING_EXCHANGE_RATIO == 0) {revert InvalidInput();}
             if (_FUNDING_REWARD_RATE == 0) {revert InvalidInput();}
-            if(_PRINCIPAL_TOKEN_ADDRESS == address(0)) {revert InvalidInput();}
-            if(_PSM_ADDRESS == address(0)) {revert InvalidInput();}
+            if (_PRINCIPAL_TOKEN_ADDRESS == address(0)) {revert InvalidInput();}
+            if (_PSM_ADDRESS == address(0)) {revert InvalidInput();}
+            if (_B_TOKEN == address(0)) {revert InvalidInput();}
+            if (_PORTAL_ENERGY == address(0)) {revert InvalidInput();}
             if (_TERMINAL_MAX_LOCK_DURATION < maxLockDuration) {revert InvalidInput();}
             if (_AMOUNT_TO_CONVERT == 0) {revert InvalidInput();}
 
@@ -64,9 +68,9 @@ contract Portal is ReentrancyGuard {
             FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
             FUNDING_REWARD_RATE = _FUNDING_REWARD_RATE;
             PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
-            bToken = new MintBurnToken(address(this),"bHLP","bHLP");
-            portalEnergyToken = new MintBurnToken(address(this),"Portal Energy","PE");
             PSM_ADDRESS = _PSM_ADDRESS;
+            bToken = MintBurnToken(_B_TOKEN);   //new MintBurnToken(address(this),"bHLP","bHLP");
+            portalEnergyToken = MintBurnToken(_PORTAL_ENERGY); //new MintBurnToken(address(this),"Portal Energy","PE");
             TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
             AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
             CREATION_TIME = block.timestamp;
