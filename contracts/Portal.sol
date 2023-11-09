@@ -276,8 +276,8 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
-        accounts[msg.sender].lastUpdateTime,
-        accounts[msg.sender].lastMaxLockDuration,
+        block.timestamp,
+        maxLockDuration,
         accounts[msg.sender].stakedBalance,
         accounts[msg.sender].maxStakeDebt, 
         accounts[msg.sender].portalEnergy, 
@@ -308,11 +308,11 @@ contract Portal is ReentrancyGuard {
         /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
         _withdrawFromYieldSource(_amount);
 
-        /// @dev Update the user's stake info
-        accounts[msg.sender].stakedBalance -= _amount;
-        accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
-        accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
-        accounts[msg.sender].availableToWithdraw -= _amount;
+        /// @dev Update the user's stake info & cache to memory
+        uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
+        uint256 maxStakeDebt = accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
+        uint256 portalEnergy = accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration) / SECONDS_PER_YEAR;
+        uint256 availableToWithdraw = accounts[msg.sender].availableToWithdraw -= _amount;
 
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= _amount;
@@ -322,12 +322,12 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
-        accounts[msg.sender].lastUpdateTime,
-        accounts[msg.sender].lastMaxLockDuration,
-        accounts[msg.sender].stakedBalance,
-        accounts[msg.sender].maxStakeDebt, 
-        accounts[msg.sender].portalEnergy,
-        accounts[msg.sender].availableToWithdraw);
+        block.timestamp,
+        maxLockDuration,
+        stakedBalance,
+        maxStakeDebt, 
+        portalEnergy,
+        availableToWithdraw);
     }
 
 
@@ -344,13 +344,17 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's stake data
         _updateAccount(msg.sender,0);
 
-        /// @dev Calculate how many portalEnergyToken must be burned from the user's wallet, if any
-        if(accounts[msg.sender].portalEnergy < accounts[msg.sender].maxStakeDebt) {
+        /// @dev Initialize cached variable
+        uint256 portalEnergy = accounts[msg.sender].portalEnergy;
 
-            uint256 remainingDebt = accounts[msg.sender].maxStakeDebt - accounts[msg.sender].portalEnergy;
+        /// @dev Calculate how many portalEnergyToken must be burned from the user's wallet, if any
+        if(portalEnergy < accounts[msg.sender].maxStakeDebt) {
+
+            uint256 remainingDebt = accounts[msg.sender].maxStakeDebt - portalEnergy;
 
             /// @dev Require that the user has enough Portal Energy Tokens
             if(IERC20(portalEnergyToken).balanceOf(address(msg.sender)) < remainingDebt) {revert InsufficientPEtokens();}
+            
             /// @dev Burn the appropriate portalEnergyToken from the user's wallet to increase portalEnergy sufficiently
             _burnPortalEnergyToken(msg.sender, remainingDebt);
         }
@@ -362,7 +366,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
         accounts[msg.sender].maxStakeDebt = 0;
-        accounts[msg.sender].portalEnergy -= (balance * maxLockDuration) / SECONDS_PER_YEAR;
+        portalEnergy = accounts[msg.sender].portalEnergy -= (balance * maxLockDuration) / SECONDS_PER_YEAR;
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
@@ -373,12 +377,12 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
-        accounts[msg.sender].lastUpdateTime,
-        accounts[msg.sender].lastMaxLockDuration,
-        accounts[msg.sender].stakedBalance,
-        accounts[msg.sender].maxStakeDebt, 
-        accounts[msg.sender].portalEnergy,
-        accounts[msg.sender].availableToWithdraw);
+        block.timestamp,
+        maxLockDuration,
+        0,
+        0, 
+        portalEnergy,
+        0);
     }
 
     // ============================================
