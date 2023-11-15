@@ -396,6 +396,7 @@ contract Portal is ReentrancyGuard {
     function _depositToYieldSource() private {
         /// @dev Read how many principalTokens are in the contract and approve this amount
         uint256 balance = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, 0);
         IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, balance);
 
         /// @dev Transfer the approved balance to the external protocol using the interface
