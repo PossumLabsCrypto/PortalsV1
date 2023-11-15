@@ -27,7 +27,7 @@ The second user of Portals is the yield speculator. If the provided yield in a p
 * Sell Portal Energy back to PSM to close the trade
 
 ## Funders
-When a specific Portal is ready to launch, it’ll undergo an initial funding phase where funders can deposit PSM tokens up to a certain limit. 
+When a specific Portal is ready to launch, it’ll undergo an initial funding phase where funders can deposit PSM tokens. 
 In return, they’re given receipt tokens based on the “rewardRate.” For example, if someone deposits 100 PSM tokens and the rewardRate is 1,000%, they’ll get receipt tokens for 1000 PSM.
 These receipt tokens, called bTokens, can later be redeemed for PSM. 
 * contribute PSM during funding phase
