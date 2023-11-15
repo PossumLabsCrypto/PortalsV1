@@ -212,6 +212,9 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the last update time stamp
         accounts[_user].lastUpdateTime = block.timestamp;
 
+        /// @dev Update the user's maximum lock duration
+        accounts[_user].lastMaxLockDuration = maxLockDuration;
+
         /// @dev Update the user's staked balance
         accounts[_user].stakedBalance += _amount;
 
@@ -863,8 +866,8 @@ contract Portal is ReentrancyGuard {
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
 
-        /// @dev Get the last maxLockDuration
-        lastMaxLockDuration = accounts[_user].lastMaxLockDuration;
+        /// @dev Get the updated last maxLockDuration
+        lastMaxLockDuration = maxLockDuration;
 
         /// @dev Calculate the user's staked balance
         stakedBalance = accounts[_user].stakedBalance + _amount;
