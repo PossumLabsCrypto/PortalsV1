@@ -309,7 +309,11 @@ contract Portal is ReentrancyGuard {
         if(_amount > accounts[msg.sender].stakedBalance) {revert InsufficientStake();}
 
         /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
+        /// @dev Sanity check that the withdrawn amount from yield source is the amount sent to user
+        uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
         _withdrawFromYieldSource(_amount);
+        uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+        _amount = balanceAfter - balanceBefore;
 
         /// @dev Update the user's stake info & cache to memory
         uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
@@ -364,7 +368,12 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Withdraw the principal from the yield source to pay the user
         uint256 balance = accounts[msg.sender].stakedBalance;
+        uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this)); 
         _withdrawFromYieldSource(balance);
+        uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+
+        /// @dev Sanity check that the withdrawn amount from yield source is within rounding error
+        if (balance + balanceAfter > balanceBefore+1) {revert InsufficientBalance();}
 
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
