@@ -372,8 +372,8 @@ contract Portal is ReentrancyGuard {
         _withdrawFromYieldSource(balance);
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
 
-        /// @dev Sanity check that the withdrawn amount from yield source is within rounding error
-        if (balance + balanceAfter > balanceBefore+1) {revert InsufficientBalance();}
+        /// @dev Sanity check that the withdrawn amount from yield source is as expected
+        if (balance != balanceAfter - balanceBefore) {revert InsufficientBalance();}
 
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
