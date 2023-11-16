@@ -504,9 +504,10 @@ contract Portal is ReentrancyGuard {
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
     function buyPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
-        /// @dev Require that the input amount is greater than zero
+        /// @dev Require that the input amount & minimum received is greater than zero
         if (_amountInput == 0) {revert InvalidInput();}
-        
+        if (_minReceived == 0) {revert InvalidInput();}
+
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
@@ -552,8 +553,9 @@ contract Portal is ReentrancyGuard {
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
     function sellPortalEnergy(uint256 _amountInput, uint256 _minReceived, uint256 _deadline) external nonReentrant existingAccount {
-        /// @dev Require that the input amount is greater than zero
-        if (_amountInput == 0) {revert InvalidInput();}        
+        /// @dev Require that the input amount & minimum received is greater than zero
+        if (_amountInput == 0) {revert InvalidInput();}
+        if (_minReceived == 0) {revert InvalidInput();}   
         
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
