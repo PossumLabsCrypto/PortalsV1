@@ -863,6 +863,11 @@ contract Portal is ReentrancyGuard {
         uint256 portalEnergy,
         uint256 availableToWithdraw) {
 
+        /// @dev Check if the queried user has an account and revert if not
+        if (!accounts[_user].isExist) {
+            revert AccountDoesNotExist();
+        }
+
         /// @dev Calculate the portalEnergy earned since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance * 
             (block.timestamp - accounts[_user].lastUpdateTime)) / SECONDS_PER_YEAR;
