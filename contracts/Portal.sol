@@ -218,11 +218,8 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's staked balance
         accounts[_user].stakedBalance += _amount;
 
-        /// @dev Update the user's maxStakeDebt based on the new stake amount
-        /// @dev If the maxLockDuration increases, already staked balances will not increase their maxStakeDebt
-        /// @dev This is required so that the withdrawal math works as intended
-        /// @notice Users seeking to increase their maxStakeDebt to the fullest extent must re-stake after duration increase
-        accounts[_user].maxStakeDebt += portalEnergyIncrease;
+        /// @dev Update the user's maxStakeDebt based on added stake amount and current maxLockDuration
+        accounts[_user].maxStakeDebt = ((accounts[_user].stakedBalance + _amount) * maxLockDuration) / SECONDS_PER_YEAR;
 
         /// @dev Update the user's portalEnergy
         accounts[_user].portalEnergy += portalEnergyEarned + portalEnergyIncrease;
