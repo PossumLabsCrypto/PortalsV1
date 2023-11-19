@@ -272,7 +272,7 @@ contract Portal is ReentrancyGuard {
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
 
         /// @dev Deposit the principal into the yield source (external protocol)
-        _depositToYieldSource();
+        _depositToYieldSource(_amount);
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
@@ -402,17 +402,16 @@ contract Portal is ReentrancyGuard {
     /// @dev It approves the amount of tokens to be transferred
     /// @dev It transfers the tokens from the Portal to the external protocol via interface
     /// @dev It emits an Event that tokens have been staked
-    function _depositToYieldSource() private {
-        /// @dev Read how many principalTokens are in the contract and approve this amount
-        uint256 balance = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+    function _depositToYieldSource(uint256 _amount) private {
+        /// @dev Approve the amount to be transferred
         IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, 0);
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, balance);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).approve(HLP_STAKING, _amount);
 
         /// @dev Transfer the approved balance to the external protocol using the interface
-        IStaking(HLP_STAKING).deposit(address(this), balance);
+        IStaking(HLP_STAKING).deposit(address(this), _amount);
 
         /// @dev Emit an event that tokens have been staked for the user
-        emit TokenStaked(msg.sender, balance);
+        emit TokenStaked(msg.sender, _amount);
     }
 
 
@@ -622,29 +621,31 @@ contract Portal is ReentrancyGuard {
     // ============================================
     /// @notice Handle the arbitrage conversion of tokens inside the contract for PSM tokens
     /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
-    /// @dev It checks if the output token is not the input or stake token (PSM / HLP)
-    /// @dev It checks if sufficient output token is available in the contract for frontrun protection
-    /// @dev It transfers the input (PSM) token from the user to the contract
+    /// @dev It checks if the output token is not the input token (PSM)
+    /// @dev It checks if output tokens are available in the contract for frontrun protection
     /// @dev It updates the funding reward pool balance and the tracker of collected rewards
+    /// @dev It transfers the input (PSM) token from the user to the contract
     /// @dev It transfers the output token from the contract to the user
     /// @param _token The token to convert
     /// @param _minReceived The minimum amount of tokens to receive
     function convert(address _token, uint256 _minReceived, uint256 _deadline) external nonReentrant {
-        /// @dev Require that the output token is a valid address and not the input or stake token (PSM / HLP)
+        /// @dev Require that the output token is not the input token (PSM)
         if(_token == PSM_ADDRESS) {revert InvalidToken();}
-        if(_token == PRINCIPAL_TOKEN_ADDRESS) {revert InvalidToken();}
-        if(_token == address(0)) {revert InvalidToken();}
 
         /// @dev Require that the deadline has not expired
         if(_deadline < block.timestamp) {revert DeadlineExpired();}
 
-        /// @dev Check if sufficient output token is available in the contract for frontrun protection
-        uint256 contractBalance = IERC20(_token).balanceOf(address(this));
-        if(contractBalance < _minReceived) {revert InvalidOutput();}
-        if(contractBalance == 0)  {revert InvalidOutput();}
+        /// @dev Get the contract balance of the correct token
+        uint256 contractBalance;
+        if(_token == address(0)) {
+        contractBalance = address(this).balance;         
+        } else {
+        contractBalance = IERC20(_token).balanceOf(address(this));
+        }
 
-        /// @dev Transfer the input (PSM) token from the user to the contract
-        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), AMOUNT_TO_CONVERT); 
+        /// @dev Check if sufficient output token is available in the contract for frontrun protection
+        if(contractBalance < _minReceived) {revert InvalidOutput();}
+        if(contractBalance == 0) {revert InvalidOutput();}
 
         /// @dev Update the funding reward pool balance and the tracker of collected rewards
         if (bToken.totalSupply() > 0 && fundingRewardsCollected < fundingMaxRewards) {
@@ -653,8 +654,15 @@ contract Portal is ReentrancyGuard {
             fundingRewardsCollected += newRewards;
         }
 
+        /// @dev Transfer the input token (PSM) from the user to the contract
+        IERC20(PSM_ADDRESS).safeTransferFrom(msg.sender, address(this), AMOUNT_TO_CONVERT); 
+
         /// @dev Transfer the output token from the contract to the user
-        IERC20(_token).safeTransfer(msg.sender, contractBalance);
+        if(_token == address(0)) {
+            payable(msg.sender).transfer(contractBalance);
+        } else {
+            IERC20(_token).safeTransfer(msg.sender, contractBalance);
+        }
     }
 
     // ============================================
