@@ -809,9 +809,6 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the caller has sufficient tokens to burn
         if(portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {revert InsufficientBalance();}
 
-        ///@dev Update the recipient´s stake data
-        _updateAccount(_recipient,0);
-
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
 
