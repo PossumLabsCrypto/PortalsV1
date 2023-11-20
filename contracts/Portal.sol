@@ -746,11 +746,8 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the funding phase is over
         if(block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {revert FundingPhaseOngoing();}
 
-        /// @dev Calculate the amount of portalEnergy to match the funding amount in the internal liquidity pool
-        uint256 requiredPortalEnergyLiquidity = fundingBalance * FUNDING_EXCHANGE_RATIO;
-        
         /// @dev Set the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
-        constantProduct = fundingBalance * requiredPortalEnergyLiquidity;
+        constantProduct = fundingBalance**2 / FUNDING_EXCHANGE_RATIO;
 
         /// @dev Calculate the maximum rewards to be collected in PSM tokens over time
         fundingMaxRewards = bToken.totalSupply();
