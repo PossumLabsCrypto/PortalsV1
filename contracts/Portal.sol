@@ -587,7 +587,7 @@ contract Portal is ReentrancyGuard {
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
-    function quoteBuyPortalEnergy(uint256 _amountInput) external view returns(uint256) { 
+    function quoteBuyPortalEnergy(uint256 _amountInput) external activePortalCheck view returns(uint256) { 
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
@@ -603,7 +603,7 @@ contract Portal is ReentrancyGuard {
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
-    function quoteSellPortalEnergy(uint256 _amountInput) external view returns(uint256) {
+    function quoteSellPortalEnergy(uint256 _amountInput) external activePortalCheck view returns(uint256) {
         /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
