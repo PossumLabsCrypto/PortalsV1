@@ -52,7 +52,7 @@ contract Portal is ReentrancyGuard {
         address _B_TOKEN,
         address _PORTAL_ENERGY,
         uint256 _TERMINAL_MAX_LOCK_DURATION, 
-        uint256 _AMOUNT_TO_CONVERT
+        uint256 _AMOUNT_TO_CONVERT,
         uint256 _TRADE_TIMELOCK)
         {
             if (_FUNDING_PHASE_DURATION < 259200 || _FUNDING_PHASE_DURATION > 2592000) {revert InvalidInput();}
