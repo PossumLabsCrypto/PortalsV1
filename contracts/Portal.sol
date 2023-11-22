@@ -27,7 +27,7 @@ error InvalidToken();
 error FundingPhaseOngoing();
 error DurationLocked();
 error DurationCannotIncrease();
-
+error TradeTimelockActive();
 
 /// @title Portal Contract
 /// @author Possum Labs
