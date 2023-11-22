@@ -28,6 +28,7 @@ error FundingPhaseOngoing();
 error DurationLocked();
 error DurationCannotIncrease();
 error TradeTimelockActive();
+error FailedToSendNativeToken();
 
 /// @title Portal Contract
 /// @author Possum Labs
@@ -682,7 +683,8 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Transfer the output token from the contract to the user
         if(_token == address(0)) {
-            payable(msg.sender).transfer(contractBalance);
+            (bool sent, ) = payable(msg.sender).call{value: contractBalance}("");
+            if (!sent) {revert FailedToSendNativeToken();}
         } else {
             IERC20(_token).safeTransfer(msg.sender, contractBalance);
         }
