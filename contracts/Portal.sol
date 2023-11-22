@@ -52,7 +52,8 @@ contract Portal is ReentrancyGuard {
         address _B_TOKEN,
         address _PORTAL_ENERGY,
         uint256 _TERMINAL_MAX_LOCK_DURATION, 
-        uint256 _AMOUNT_TO_CONVERT)
+        uint256 _AMOUNT_TO_CONVERT
+        uint256 _TRADE_TIMELOCK)
         {
             if (_FUNDING_PHASE_DURATION < 259200 || _FUNDING_PHASE_DURATION > 2592000) {revert InvalidInput();}
             if (_FUNDING_EXCHANGE_RATIO == 0) {revert InvalidInput();}
@@ -63,6 +64,7 @@ contract Portal is ReentrancyGuard {
             if (_PORTAL_ENERGY == address(0)) {revert InvalidInput();}
             if (_TERMINAL_MAX_LOCK_DURATION < maxLockDuration) {revert InvalidInput();}
             if (_AMOUNT_TO_CONVERT == 0) {revert InvalidInput();}
+            if (_TRADE_TIMELOCK == 0) {revert InvalidInput();}
 
             FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
             FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
@@ -74,6 +76,7 @@ contract Portal is ReentrancyGuard {
             TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
             AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
             CREATION_TIME = block.timestamp;
+            TRADE_TIMELOCK = _TRADE_TIMELOCK;
     }
 
     // ============================================
@@ -123,8 +126,10 @@ contract Portal is ReentrancyGuard {
 
     // exchange related
     uint256 public constantProduct;                         // the K constant of the (x*y = K) constant product formula
+    uint256 immutable public TRADE_TIMELOCK;                // Time that must pass between a user´s interactions with the LP        
+    mapping(address => uint256) public lastTradeTime;       // Track the last interaction with the LP by the user
 
-    // user related
+    // staking related
     struct Account {                                        // contains information of user stake positions
         bool isExist;
         uint256 lastUpdateTime;
@@ -507,9 +512,15 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
+
         /// @dev Require that the user has enough PSM token to sell
         if(IERC20(PSM_ADDRESS).balanceOf(msg.sender) < _amountInput) {revert InsufficientBalance();}
-        
+
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) - fundingRewardPool;
 
@@ -521,6 +532,9 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Require that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if(amountReceived < _minReceived) {revert InvalidOutput();}
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
 
         /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
@@ -556,6 +570,12 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the deadline has not expired
         if (_deadline < block.timestamp) {revert DeadlineExpired();}
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Require that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
+
         /// @dev Update the stake data of the user
         _updateAccount(msg.sender,0);
         
@@ -573,6 +593,9 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Require that the amount of output token received is greater than or equal to the minimum expected output
         if(amountReceived < _minReceived) {revert InvalidOutput();}
+
+        /// @dev update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
 
         /// @dev Reduce the portalEnergy balance of the user by the amount of portalEnergy sold
         accounts[msg.sender].portalEnergy -= _amountInput;
