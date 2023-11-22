@@ -959,4 +959,8 @@ contract Portal is ReentrancyGuard {
     function getPendingRewards(address _rewarder) external view returns(uint256 claimableReward){
         claimableReward = IRewarder(_rewarder).pendingReward(address(this));
     }
+
+
+    receive() external payable { }
+    fallback() external payable {}
 }
