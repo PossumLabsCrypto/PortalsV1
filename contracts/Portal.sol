@@ -229,7 +229,7 @@ contract Portal is ReentrancyGuard {
         accounts[_user].stakedBalance += _amount;
 
         /// @dev Update the user's maxStakeDebt based on added stake amount and current maxLockDuration
-        accounts[_user].maxStakeDebt = ((accounts[_user].stakedBalance + _amount) * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
+        accounts[_user].maxStakeDebt = (accounts[_user].stakedBalance * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
 
         /// @dev Update the user's portalEnergy
         accounts[_user].portalEnergy += portalEnergyEarned + portalEnergyIncrease;
@@ -917,7 +917,7 @@ contract Portal is ReentrancyGuard {
         stakedBalance = accounts[_user].stakedBalance + _amount;
 
         /// @dev Update the user's max stake debt
-        maxStakeDebt = ((accounts[_user].stakedBalance + _amount) * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
+        maxStakeDebt = (stakedBalance * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
 
         /// @dev Update the user's portalEnergy by adding the portalEnergy earned since the last update
         portalEnergy = accounts[_user].portalEnergy + portalEnergyEarned + portalEnergyIncrease;
