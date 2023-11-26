@@ -324,7 +324,7 @@ contract Portal is ReentrancyGuard {
 
         /// @dev Update the user's stake info & cache to memory
         uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
-        uint256 maxStakeDebt = accounts[msg.sender].maxStakeDebt -= (_amount * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
+        uint256 maxStakeDebt = accounts[msg.sender].maxStakeDebt = (stakedBalance * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
         uint256 portalEnergy = accounts[msg.sender].portalEnergy -= (_amount * maxLockDuration * 1e18) / (SECONDS_PER_YEAR * DECIMALS);
         uint256 availableToWithdraw = accounts[msg.sender].availableToWithdraw -= _amount;
 
