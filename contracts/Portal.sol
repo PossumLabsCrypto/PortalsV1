@@ -320,7 +320,7 @@ contract Portal is ReentrancyGuard {
         uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
         _withdrawFromYieldSource(_amount);
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
-        _amount = balanceAfter - balanceBefore;
+        uint256 availableAmount = balanceAfter - balanceBefore;
 
         /// @dev Update the user's stake info & cache to memory
         uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
@@ -332,7 +332,7 @@ contract Portal is ReentrancyGuard {
         totalPrincipalStaked -= _amount;
 
         /// @dev Send the principal tokens to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, _amount);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, availableAmount);
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(msg.sender, 
@@ -378,6 +378,7 @@ contract Portal is ReentrancyGuard {
         uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this)); 
         _withdrawFromYieldSource(balance);
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
+        uint256 availableAmount = balanceAfter - balanceBefore;
 
         /// @dev Sanity check that the withdrawn amount from yield source is as expected
         if (balance != balanceAfter - balanceBefore) {revert InsufficientBalance();}
@@ -389,7 +390,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, balance);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, availableAmount);
         
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= balance;
