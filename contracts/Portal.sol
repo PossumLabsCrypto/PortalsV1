@@ -308,6 +308,9 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits an event with the updated stake information
     /// @param _amount The amount of tokens to unstake
     function unstake(uint256 _amount) external nonReentrant existingAccount {
+        /// @dev Require that the unstaked amount is greater than zero
+        if (_amount == 0) {revert InvalidInput();}        
+
         /// @dev Update the user's stake data
         _updateAccount(msg.sender,0);
 
