@@ -3,7 +3,7 @@ pragma solidity =0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol"; //audit: use V4.9.0
 import {MintBurnToken} from "./MintBurnToken.sol";
 import {IStaking} from "./interfaces/IStaking.sol";
 import {ICompounder} from "./interfaces/ICompounder.sol";
@@ -378,6 +378,11 @@ contract Portal is ReentrancyGuard {
     /// @dev It emits an event with the updated stake information
     /// @param _amount The amount of tokens to unstake
     function unstake(uint256 _amount) external nonReentrant existingAccount {
+        /// @dev Require that the unstaked amount is greater than zero
+        if (_amount == 0) {
+            revert InvalidInput();
+        }
+
         /// @dev Update the user's stake data
         _updateAccount(msg.sender, 0);
 
@@ -398,7 +403,7 @@ contract Portal is ReentrancyGuard {
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
             address(this)
         );
-        _amount = balanceAfter - balanceBefore;
+        uint256 availableAmount = balanceAfter - balanceBefore;
 
         /// @dev Update the user's stake info & cache to memory
         uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
@@ -417,7 +422,10 @@ contract Portal is ReentrancyGuard {
         totalPrincipalStaked -= _amount;
 
         /// @dev Send the principal tokens to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, _amount);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
+            msg.sender,
+            availableAmount
+        );
 
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(
@@ -473,11 +481,7 @@ contract Portal is ReentrancyGuard {
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
             address(this)
         );
-
-        /// @dev Sanity check that the withdrawn amount from yield source is as expected
-        if (balance != balanceAfter - balanceBefore) {
-            revert InsufficientBalance();
-        }
+        uint256 availableAmount = balanceAfter - balanceBefore;
 
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
@@ -488,7 +492,10 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(msg.sender, balance);
+        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
+            msg.sender,
+            availableAmount
+        );
 
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= balance;
