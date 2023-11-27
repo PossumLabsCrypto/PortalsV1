@@ -380,9 +380,6 @@ contract Portal is ReentrancyGuard {
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(address(this));
         uint256 availableAmount = balanceAfter - balanceBefore;
 
-        /// @dev Sanity check that the withdrawn amount from yield source is as expected
-        if (balance != balanceAfter - balanceBefore) {revert InsufficientBalance();}
-
         /// @dev Update the user's stake info
         accounts[msg.sender].stakedBalance = 0;
         accounts[msg.sender].maxStakeDebt = 0;
