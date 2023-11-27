@@ -1,4 +1,3 @@
-<<<<<<< Portals-Patches-HatsCompetition
 # Possum Portals
 Enabling Users To Claim Fee-Less Upfront Yield
 
