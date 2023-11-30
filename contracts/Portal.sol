@@ -809,6 +809,15 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
         if(portalEnergy < _amount) {revert InsufficientBalance();}
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
+
         /// @dev Update the user´s stake data
         _updateAccount(msg.sender,0);
 
@@ -836,6 +845,15 @@ contract Portal is ReentrancyGuard {
         /// @dev Require that the caller has sufficient tokens to burn
         if(portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {revert InsufficientBalance();}
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
+
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
 
@@ -852,6 +870,14 @@ contract Portal is ReentrancyGuard {
     /// @param _user The user whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {   
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(_user, _amount);
