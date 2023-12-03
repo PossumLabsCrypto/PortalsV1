@@ -871,13 +871,13 @@ contract Portal is ReentrancyGuard {
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {   
         /// @dev Calculate the time passed since the user´s last trade on the internal LP
-        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+        uint256 passedTime = block.timestamp - lastTradeTime[_user];
 
         /// @dev Check that the user has not interacted with the LP recently
         if (passedTime < TRADE_TIMELOCK) {revert TradeTimelockActive();}
 
         /// @dev Update the user´s last interaction time with the internal LP
-        lastTradeTime[msg.sender] = block.timestamp;
+        lastTradeTime[_user] = block.timestamp;
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(_user, _amount);
