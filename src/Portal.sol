@@ -98,7 +98,7 @@ contract Portal is ReentrancyGuard {
         FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
         FUNDING_REWARD_RATE = _FUNDING_REWARD_RATE;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
-        DECIMALS = _DECIMALS;
+        DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
         PSM_ADDRESS = _PSM_ADDRESS;
         bToken = MintBurnToken(_B_TOKEN);
         portalEnergyToken = MintBurnToken(_PORTAL_ENERGY);
@@ -128,7 +128,7 @@ contract Portal is ReentrancyGuard {
 
     // principal management related
     address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit (HLP)
-    uint256 public immutable DECIMALS; // number of decimals of the principal token
+    uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
     address payable private constant COMPOUNDER_ADDRESS =
         payable(0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
 
@@ -267,13 +267,13 @@ contract Portal is ReentrancyGuard {
         /// @dev Calculate the accrued portalEnergy since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance *
             (block.timestamp - accounts[_user].lastUpdateTime) *
-            1e18) / (SECONDS_PER_YEAR * DECIMALS);
+            1e18) / (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Calculate the increase of portalEnergy due to balance increase
         uint256 portalEnergyIncrease = ((accounts[_user].stakedBalance *
             (maxLockDuration - accounts[_user].lastMaxLockDuration) +
             (_amount * maxLockDuration)) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the last update time stamp
         accounts[_user].lastUpdateTime = block.timestamp;
@@ -287,7 +287,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's maxStakeDebt based on added stake amount and current maxLockDuration
         accounts[_user].maxStakeDebt =
             (accounts[_user].stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the user's portalEnergy
         accounts[_user].portalEnergy +=
@@ -325,7 +325,7 @@ contract Portal is ReentrancyGuard {
             _updateAccount(msg.sender, _amount);
         } else {
             uint256 maxStakeDebt = (_amount * maxLockDuration * 1e18) /
-                (SECONDS_PER_YEAR * DECIMALS);
+                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
             uint256 availableToWithdraw = _amount;
             uint256 portalEnergy = maxStakeDebt;
 
@@ -409,10 +409,10 @@ contract Portal is ReentrancyGuard {
         uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
         uint256 maxStakeDebt = accounts[msg.sender].maxStakeDebt =
             (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         uint256 portalEnergy = accounts[msg.sender].portalEnergy -=
             (_amount * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         uint256 availableToWithdraw = accounts[msg.sender]
             .availableToWithdraw = portalEnergy >= maxStakeDebt
             ? stakedBalance
@@ -488,7 +488,7 @@ contract Portal is ReentrancyGuard {
         accounts[msg.sender].maxStakeDebt = 0;
         portalEnergy = accounts[msg.sender].portalEnergy -=
             (balance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         accounts[msg.sender].availableToWithdraw = 0;
 
         /// @dev Send the user´s staked balance to the user
@@ -1006,6 +1006,17 @@ contract Portal is ReentrancyGuard {
             revert InsufficientBalance();
         }
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {
+            revert TradeTimelockActive();
+        }
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
+
         /// @dev Update the user´s stake data
         _updateAccount(msg.sender, 0);
 
@@ -1041,6 +1052,17 @@ contract Portal is ReentrancyGuard {
             revert InsufficientBalance();
         }
 
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[msg.sender];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {
+            revert TradeTimelockActive();
+        }
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[msg.sender] = block.timestamp;
+
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
 
@@ -1056,6 +1078,17 @@ contract Portal is ReentrancyGuard {
     /// @param _user The user whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {
+        /// @dev Calculate the time passed since the user´s last trade on the internal LP
+        uint256 passedTime = block.timestamp - lastTradeTime[_user];
+
+        /// @dev Check that the user has not interacted with the LP recently
+        if (passedTime < TRADE_TIMELOCK) {
+            revert TradeTimelockActive();
+        }
+
+        /// @dev Update the user´s last interaction time with the internal LP
+        lastTradeTime[_user] = block.timestamp;
+
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(_user, _amount);
 
@@ -1114,13 +1147,13 @@ contract Portal is ReentrancyGuard {
         /// @dev Calculate the portalEnergy earned since the last update
         uint256 portalEnergyEarned = (accounts[_user].stakedBalance *
             (block.timestamp - accounts[_user].lastUpdateTime) *
-            1e18) / (SECONDS_PER_YEAR * DECIMALS);
+            1e18) / (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Calculate the increase of portalEnergy due to balance increase
         uint256 portalEnergyIncrease = ((accounts[_user].stakedBalance *
             (maxLockDuration - accounts[_user].lastMaxLockDuration) +
             (_amount * maxLockDuration)) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
@@ -1134,7 +1167,7 @@ contract Portal is ReentrancyGuard {
         /// @dev Update the user's max stake debt
         maxStakeDebt =
             (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS);
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the user's portalEnergy by adding the portalEnergy earned since the last update
         portalEnergy =
