@@ -158,7 +158,7 @@ contract PortalV2 is ReentrancyGuard {
 
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
     uint256 public immutable FUNDING_APR; // redemption value appreciation rate of bTokens
-    uint256 public immutable FUNDING_MAX_RETURN_PERCENT; // maximum redemption value increase of bTokens
+    uint256 public immutable FUNDING_MAX_RETURN_PERCENT; // maximum redemption value increase of bTokens in percent
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
     uint256 public fundingBalance; // sum of all PSM funding contributions
@@ -168,6 +168,7 @@ contract PortalV2 is ReentrancyGuard {
     // exchange related
     uint256 private immutable FUNDING_EXCHANGE_RATIO; // amount of portalEnergy per PSM for calculating k during funding process
     uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
+    uint256 public constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
 
     // staking related
     // contains information of user stake positions
@@ -663,16 +664,8 @@ contract PortalV2 is ReentrancyGuard {
             revert InsufficientBalance();
         }
 
-        /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
-            fundingRewardPool;
-
-        /// @dev Calculate the reserve of portalEnergy (output)
-        uint256 reserve1 = constantProduct / reserve0;
-
         /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
-        uint256 amountReceived = (_amountInput * reserve1) /
-            (_amountInput + reserve0);
+        uint256 amountReceived = quoteBuyPortalEnergy(_amountInput);
 
         /// @dev Require that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
@@ -686,7 +679,7 @@ contract PortalV2 is ReentrancyGuard {
         accounts[_recipient].portalEnergy += amountReceived;
 
         /// @dev Transfer the PSM tokens from the caller to the contract
-        IERC20(PSM_ADDRESS).safeTransferFrom(
+        IERC20(PSM_ADDRESS).transferFrom(
             msg.sender,
             address(this),
             _amountInput
@@ -737,16 +730,8 @@ contract PortalV2 is ReentrancyGuard {
             revert InsufficientBalance();
         }
 
-        /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
-            fundingRewardPool;
-
-        /// @dev Calculate the reserve of portalEnergy (input)
-        uint256 reserve1 = constantProduct / reserve0;
-
         /// @dev Calculate the amount of output token received based on the amount of portalEnergy sold
-        uint256 amountReceived = (_amountInput * reserve0) /
-            (_amountInput + reserve1);
+        uint256 amountReceived = quoteSellPortalEnergy(_amountInput);
 
         /// @dev Require that the amount of output token received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
@@ -767,7 +752,7 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
     function quoteBuyPortalEnergy(
         uint256 _amountInput
-    ) external view activePortalCheck returns (uint256) {
+    ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
             fundingRewardPool;
@@ -775,30 +760,30 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = constantProduct / reserve0;
 
-        /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
-        uint256 amountReceived = (_amountInput * reserve1) /
-            (_amountInput + reserve0);
+        /// @dev Reduce amount by the LP Protection Hurdle to prevent sandwich attacks
+        _amountInput = (_amountInput * (1 - LP_PROTECTION_HURDLE)) / 100;
 
-        return (amountReceived);
+        /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
+        amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
     }
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
     function quoteSellPortalEnergy(
         uint256 _amountInput
-    ) external view activePortalCheck returns (uint256) {
+    ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
             fundingRewardPool;
 
         /// @dev Calculate the reserve of portalEnergy (input)
-        uint256 reserve1 = constantProduct / reserve0;
+        /// @dev Avoid zero value to prevent theoretical drainer attack by donating PSM before selling 1 PE
+        uint256 reserve1 = (reserve0 > constantProduct)
+            ? 1
+            : constantProduct / reserve0;
 
         /// @dev Calculate the amount of PSM tokens received based on the amount of portalEnergy sold
-        uint256 amountReceived = (_amountInput * reserve0) /
-            (_amountInput + reserve1);
-
-        return (amountReceived);
+        amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
     }
 
     // ============================================
@@ -847,10 +832,8 @@ contract PortalV2 is ReentrancyGuard {
         }
 
         /// @dev Check for reward overflow and reallocate rewards to internal LP if necessary (passive)
-        uint256 maxRewards = (bToken.totalSupply() == 0)
-            ? 0
-            : (bToken.totalSupply() * FUNDING_MAX_RETURN_PERCENT) / 100;
-
+        uint256 maxRewards = (bToken.totalSupply() *
+            FUNDING_MAX_RETURN_PERCENT) / 100;
         if (fundingRewardPool > maxRewards) {
             fundingRewardPool = maxRewards;
         }
@@ -1114,11 +1097,14 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Reduce the portalEnergy of the caller by the amount of portal energy tokens to be minted
         accounts[msg.sender].portalEnergy -= _amount;
 
+        /// @dev Deduct the LP Protection Hurdle from the minted amount to prevent indirect sandwich attacks
+        uint256 mintedAmount = (_amount * (100 - LP_PROTECTION_HURDLE)) / 100;
+
         /// @dev Mint portal energy tokens to the recipient's wallet
-        portalEnergyToken.mint(_recipient, _amount);
+        portalEnergyToken.mint(_recipient, mintedAmount);
 
         /// @dev Emit the event that the ERC20 representation has been minted to recipient
-        emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
+        emit PortalEnergyMinted(address(msg.sender), _recipient, mintedAmount);
     }
 
     /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of recipient equally
