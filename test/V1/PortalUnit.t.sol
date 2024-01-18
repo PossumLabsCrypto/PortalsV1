@@ -2,7 +2,7 @@
 pragma solidity =0.8.19;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {Portal} from "../src/V1/Portal.sol";
+import {Portal} from "src/V1/Portal.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MintBurnToken} from "./mocks/MintToken.sol";
 

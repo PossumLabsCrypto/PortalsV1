@@ -52,11 +52,8 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _FUNDING_PHASE_DURATION,
         uint256 _FUNDING_MIN_AMOUNT,
         uint256 _FUNDING_EXCHANGE_RATIO,
-        uint256 _FUNDING_APR,
-        uint256 _FUNDING_MAX_RETURN_PERCENT,
         address _PRINCIPAL_TOKEN_ADDRESS,
         uint256 _DECIMALS,
-        address _PSM_ADDRESS,
         uint256 _TERMINAL_MAX_LOCK_DURATION,
         uint256 _AMOUNT_TO_CONVERT
     ) {
@@ -72,19 +69,10 @@ contract PortalV2 is ReentrancyGuard {
         if (_FUNDING_EXCHANGE_RATIO == 0) {
             revert InvalidInput();
         }
-        if (_FUNDING_APR == 0) {
-            revert InvalidInput();
-        }
-        if (_FUNDING_MAX_RETURN_PERCENT < 100) {
-            revert InvalidInput();
-        }
         if (_PRINCIPAL_TOKEN_ADDRESS == address(0)) {
             revert InvalidInput();
         }
         if (_DECIMALS == 0) {
-            revert InvalidInput();
-        }
-        if (_PSM_ADDRESS == address(0)) {
             revert InvalidInput();
         }
         if (_TERMINAL_MAX_LOCK_DURATION < maxLockDuration) {
@@ -97,11 +85,8 @@ contract PortalV2 is ReentrancyGuard {
         FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
         FUNDING_MIN_AMOUNT = _FUNDING_MIN_AMOUNT;
         FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
-        FUNDING_APR = _FUNDING_APR;
-        FUNDING_MAX_RETURN_PERCENT = _FUNDING_MAX_RETURN_PERCENT;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
-        PSM_ADDRESS = _PSM_ADDRESS;
         TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
@@ -118,7 +103,8 @@ contract PortalV2 is ReentrancyGuard {
     bool public bTokenCreated; // flag for bToken creation
     bool public portalEnergyTokenCreated; // flag for PE token creation
 
-    address public immutable PSM_ADDRESS; // address of PSM token
+    address public constant PSM_ADDRESS =
+        0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
     uint256 public immutable AMOUNT_TO_CONVERT; // constant amount of PSM tokens required to withdraw yield in the contract
     uint256 public immutable TERMINAL_MAX_LOCK_DURATION; // terminal maximum lock duration of a user´s balance in seconds
     uint256 public immutable CREATION_TIME; // time stamp of deployment
@@ -157,8 +143,8 @@ contract PortalV2 is ReentrancyGuard {
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds that the funding phase lasts before Portal can be activated
 
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
-    uint256 public immutable FUNDING_APR; // redemption value appreciation rate of bTokens
-    uint256 public immutable FUNDING_MAX_RETURN_PERCENT; // maximum redemption value increase of bTokens in percent
+    uint256 public constant FUNDING_APR = 50; // redemption value appreciation rate of bTokens
+    uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
     uint256 public fundingBalance; // sum of all PSM funding contributions
@@ -265,54 +251,27 @@ contract PortalV2 is ReentrancyGuard {
     // ============================================
     /// @notice Update user data to the current state
     /// @dev This function updates the user data to the current state
-    /// @dev It calculates the accrued portalEnergy since the last update
-    /// @dev It calculates the added portalEnergy due to increased stake balance
-    /// @dev It updates the last update time stamp
-    /// @dev It updates the user's staked balance
-    /// @dev It updates the user's maxStakeDebt
-    /// @dev It updates the user's portalEnergy
-    /// @dev It updates the amount available to unstake
+    /// @dev It takes memory inputs and stores them into the user account struct
     /// @param _user The user whose data is to be updated
-    /// @param _amount The amount to be added to the user's staked balance
-    function _updateAccount(address _user, uint256 _amount) private {
-        /// @dev Calculate the accrued portalEnergy since the last update
-        uint256 portalEnergyEarned = (accounts[_user].stakedBalance *
-            (block.timestamp - accounts[_user].lastUpdateTime) *
-            1e18) / (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = ((accounts[_user].stakedBalance *
-            (maxLockDuration - accounts[_user].lastMaxLockDuration) +
-            (_amount * maxLockDuration)) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Update the last update time stamp
-        accounts[_user].lastUpdateTime = block.timestamp;
-
-        /// @dev Update the user's maximum lock duration
-        accounts[_user].lastMaxLockDuration = maxLockDuration;
-
-        /// @dev Update the user's staked balance
-        accounts[_user].stakedBalance += _amount;
-
-        /// @dev Update the user's maxStakeDebt based on added stake amount and current maxLockDuration
-        accounts[_user].maxStakeDebt =
-            (accounts[_user].stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Update the user's portalEnergy
-        accounts[_user].portalEnergy +=
-            portalEnergyEarned +
-            portalEnergyIncrease;
-
-        /// @dev Update the amount available to unstake
-        if (accounts[_user].portalEnergy >= accounts[_user].maxStakeDebt) {
-            accounts[_user].availableToWithdraw = accounts[_user].stakedBalance;
-        } else {
-            accounts[_user].availableToWithdraw =
-                (accounts[_user].stakedBalance * accounts[_user].portalEnergy) /
-                accounts[_user].maxStakeDebt;
-        }
+    /// @param _stakedBalance The current Staked Balance of the user
+    /// @param _maxStakeDebt The current maximum Stake Debt of the user
+    /// @param _portalEnergy The current Portal Energy of the user
+    /// @param _availableToWithdraw The amount currently available for withdrawal
+    function _updateAccount(
+        address _user,
+        uint256 _stakedBalance,
+        uint256 _maxStakeDebt,
+        uint256 _portalEnergy,
+        uint256 _availableToWithdraw
+    ) private {
+        /// @dev Update the user´s account data
+        Account storage account = accounts[_user];
+        account.lastUpdateTime = block.timestamp;
+        account.lastMaxLockDuration = maxLockDuration;
+        account.stakedBalance = _stakedBalance;
+        account.maxStakeDebt = _maxStakeDebt;
+        account.portalEnergy = _portalEnergy;
+        account.availableToWithdraw = _availableToWithdraw;
     }
 
     /// @notice Stake the principal token into the Portal & redirect principal to yield source
@@ -330,26 +289,25 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Check if the user has a staking account and update, else initialize a new account
-        if (accounts[msg.sender].isExist == true) {
-            /// @dev Update the user's stake info
-            _updateAccount(msg.sender, _amount);
-        } else {
-            uint256 maxStakeDebt = (_amount * maxLockDuration * 1e18) /
-                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-            uint256 availableToWithdraw = _amount;
-            uint256 portalEnergy = maxStakeDebt;
+        /// @dev Get the current status of the user´s stake
+        (
+            address user,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = getUpdateAccount(msg.sender, _amount, true);
 
-            accounts[msg.sender] = Account(
-                true,
-                block.timestamp,
-                maxLockDuration,
-                _amount,
-                maxStakeDebt,
-                portalEnergy,
-                availableToWithdraw
-            );
-        }
+        /// @dev Update the user´s stake struct
+        _updateAccount(
+            user,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
+        );
 
         /// @dev Update the total stake balance
         totalPrincipalStaked += _amount;
@@ -367,12 +325,12 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(
             msg.sender,
-            block.timestamp,
-            maxLockDuration,
-            accounts[msg.sender].stakedBalance,
-            accounts[msg.sender].maxStakeDebt,
-            accounts[msg.sender].portalEnergy,
-            accounts[msg.sender].availableToWithdraw
+            lastUpdateTime,
+            lastMaxLockDuration,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
         );
     }
 
@@ -394,16 +352,28 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Update the user's stake data
-        _updateAccount(msg.sender, 0);
+        /// @dev Get the current status of the user´s stake
+        (
+            address user,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = getUpdateAccount(msg.sender, _amount, false);
 
-        /// @dev Require that the amount to be unstaked is less than or equal to the available withdrawable balance and the staked balance
-        if (_amount > accounts[msg.sender].availableToWithdraw) {
-            revert InsufficientToWithdraw();
-        }
-        if (_amount > accounts[msg.sender].stakedBalance) {
-            revert InsufficientStake();
-        }
+        /// @dev Update the user´s stake struct
+        _updateAccount(
+            user,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
+        );
+
+        /// @dev Update the global tracker of staked principal
+        totalPrincipalStaked -= _amount;
 
         /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
         /// @dev Sanity check that the withdrawn amount from yield source is the amount sent to user
@@ -416,22 +386,6 @@ contract PortalV2 is ReentrancyGuard {
         );
         uint256 availableAmount = balanceAfter - balanceBefore;
 
-        /// @dev Update the user's stake info & cache to memory
-        uint256 stakedBalance = accounts[msg.sender].stakedBalance -= _amount;
-        uint256 maxStakeDebt = accounts[msg.sender].maxStakeDebt =
-            (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-        uint256 portalEnergy = accounts[msg.sender].portalEnergy -=
-            (_amount * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-        uint256 availableToWithdraw = accounts[msg.sender]
-            .availableToWithdraw = portalEnergy >= maxStakeDebt
-            ? stakedBalance
-            : (stakedBalance * portalEnergy) / maxStakeDebt;
-
-        /// @dev Update the global tracker of staked principal
-        totalPrincipalStaked -= _amount;
-
         /// @dev Send the principal tokens to the user
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
             msg.sender,
@@ -441,8 +395,8 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(
             msg.sender,
-            block.timestamp,
-            maxLockDuration,
+            lastUpdateTime,
+            lastMaxLockDuration,
             stakedBalance,
             maxStakeDebt,
             portalEnergy,
@@ -460,66 +414,76 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev It sends the full stake balance to the user
     /// @dev It emits an event with the updated stake information
     function forceUnstakeAll() external nonReentrant existingAccount {
-        /// @dev Update the user's stake data
-        _updateAccount(msg.sender, 0);
+        /// @dev Get the current status of the user´s stake
+        (
+            ,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = getUpdateAccount(msg.sender, 0, false);
 
-        /// @dev Initialize cached variable
-        uint256 portalEnergy = accounts[msg.sender].portalEnergy;
+        /// @dev Calculate how many portalEnergyToken must be burned to unstake all
+        if (portalEnergy < maxStakeDebt) {
+            uint256 remainingDebt = maxStakeDebt - portalEnergy;
 
-        /// @dev Calculate how many portalEnergyToken must be burned from the user's wallet, if any
-        if (portalEnergy < accounts[msg.sender].maxStakeDebt) {
-            uint256 remainingDebt = accounts[msg.sender].maxStakeDebt -
-                portalEnergy;
-
-            /// @dev Require that the user has enough Portal Energy Tokens
-            if (
-                IERC20(portalEnergyToken).balanceOf(address(msg.sender)) <
-                remainingDebt
-            ) {
-                revert InsufficientPEtokens();
-            }
-
-            /// @dev Burn the appropriate portalEnergyToken from the user's wallet to increase portalEnergy sufficiently
+            /// @dev Burn portalEnergyToken from the caller to increase portalEnergy sufficiently
             _burnPortalEnergyToken(msg.sender, remainingDebt);
         }
 
-        /// @dev Withdraw the principal from the yield source to pay the user
-        uint256 balance = accounts[msg.sender].stakedBalance;
+        /// @dev initialize helper variable
+        uint256 oldStakedBalance = stakedBalance;
+
+        /// @dev Calculate the new values of the user`s stake
+        stakedBalance = 0;
+        maxStakeDebt = 0;
+        portalEnergy -=
+            (oldStakedBalance * lastMaxLockDuration * 1e18) /
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+        availableToWithdraw = 0;
+
+        /// @dev Update the user´s stake struct
+        _updateAccount(
+            msg.sender,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
+        );
+
+        /// @dev Update the global tracker of staked principal
+        totalPrincipalStaked -= oldStakedBalance;
+
+        /// @dev Withdraw the principal from the yield source (external Protocol)
+        /// @dev Sanity check that the withdrawn amount from yield source is the amount sent to user
         uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
             address(this)
         );
-        _withdrawFromYieldSource(balance);
+
+        _withdrawFromYieldSource(oldStakedBalance);
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
             address(this)
         );
+
         uint256 availableAmount = balanceAfter - balanceBefore;
 
-        /// @dev Update the user's stake info
-        accounts[msg.sender].stakedBalance = 0;
-        accounts[msg.sender].maxStakeDebt = 0;
-        portalEnergy = accounts[msg.sender].portalEnergy -=
-            (balance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-        accounts[msg.sender].availableToWithdraw = 0;
-
-        /// @dev Send the user´s staked balance to the user
+        /// @dev Send the retrieved tokens to the user
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
             msg.sender,
             availableAmount
         );
 
-        /// @dev Update the global tracker of staked principal
-        totalPrincipalStaked -= balance;
-
         /// @dev Emit an event with the updated stake information
         emit StakePositionUpdated(
             msg.sender,
-            block.timestamp,
-            maxLockDuration,
-            0,
-            0,
+            lastUpdateTime,
+            lastMaxLockDuration,
+            stakedBalance,
+            maxStakeDebt,
             portalEnergy,
-            0
+            availableToWithdraw
         );
     }
 
@@ -626,25 +590,25 @@ contract PortalV2 is ReentrancyGuard {
     // ============================================
     // ==               INTERNAL LP              ==
     // ============================================
-    /// @notice Users sell PSM into the Portal to top up portalEnergy balance
-    /// @dev This function allows users to sell PSM tokens to the contract to increase their portalEnergy
-    /// @dev It checks if the user has a stake and updates the stake data
-    /// @dev It checks if the user has enough PSM tokens
-    /// @dev It updates the input token reserve and calculates the reserve of portalEnergy (Output)
-    /// @dev It calculates the amount of portalEnergy received based on the amount of PSM tokens sold
-    /// @dev It checks if the amount of portalEnergy received is greater than or equal to the minimum expected output
-    /// @dev It transfers the PSM tokens from the user to the contract
-    /// @dev It increases the portalEnergy of the user by the amount of portalEnergy received
-    /// @dev It emits a portalEnergyBuyExecuted event
+    /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
+    /// @dev This function allows users to sell PSM tokens to the contract to increase a recipient´s portalEnergy
+    /// @dev Check if the Portal is active
+    /// @dev Perform input validation
+    /// @dev Check if the amount of portalEnergy received is greater than or equal to the minimum expected output
+    /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
+    /// @dev Transfer the PSM tokens from the caller to the contract
+    /// @dev Emit the portalEnergyBuyExecuted event
+    /// @param _recipient The recipient of the Portal Energy credit
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
+    /// @param _deadline The unix timestamp that marks the deadline for order execution
     function buyPortalEnergy(
         address _recipient,
         uint256 _amountInput,
         uint256 _minReceived,
         uint256 _deadline
-    ) external nonReentrant existingAccount {
-        /// @dev Require that the input amount & minimum received is greater than zero
+    ) external nonReentrant activePortalCheck {
+        /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
             revert InvalidInput();
         }
@@ -654,26 +618,23 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Require that the deadline has not expired
+        /// @dev Check that the deadline has not expired
         if (_deadline < block.timestamp) {
             revert DeadlineExpired();
         }
 
-        /// @dev Require that the user has enough PSM token to sell
+        /// @dev Check that the user has enough PSM token to sell
         if (IERC20(PSM_ADDRESS).balanceOf(msg.sender) < _amountInput) {
             revert InsufficientBalance();
         }
 
-        /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
+        /// @dev Get the amount of portalEnergy received based on the amount of PSM tokens sold
         uint256 amountReceived = quoteBuyPortalEnergy(_amountInput);
 
-        /// @dev Require that the amount of portalEnergy received is greater than or equal to the minimum expected output
+        /// @dev Check that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
             revert InvalidOutput();
         }
-
-        /// @dev Update the stake data of the user
-        _updateAccount(msg.sender, 0);
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
         accounts[_recipient].portalEnergy += amountReceived;
@@ -685,7 +646,7 @@ contract PortalV2 is ReentrancyGuard {
             _amountInput
         );
 
-        /// @dev Emit the portalEnergyBuyExecuted event with the user's address and the amount of portalEnergy received
+        /// @dev Emit the portalEnergyBuyExecuted event
         emit PortalEnergyBuyExecuted(msg.sender, _recipient, amountReceived);
     }
 
@@ -706,8 +667,8 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _amountInput,
         uint256 _minReceived,
         uint256 _deadline
-    ) external nonReentrant existingAccount {
-        /// @dev Require that the input amount & minimum received is greater than zero
+    ) external nonReentrant activePortalCheck {
+        /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
             revert InvalidInput();
         }
@@ -717,16 +678,24 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Require that the deadline has not expired
+        /// @dev Check that the deadline has not expired
         if (_deadline < block.timestamp) {
             revert DeadlineExpired();
         }
 
-        /// @dev Update the stake data of the user
-        _updateAccount(msg.sender, 0);
+        /// @dev Get the current status of the user´s stake
+        (
+            address user,
+            ,
+            ,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = getUpdateAccount(msg.sender, 0, true);
 
         /// @dev Require that the user has enough portalEnergy to sell
-        if (accounts[msg.sender].portalEnergy < _amountInput) {
+        if (portalEnergy < _amountInput) {
             revert InsufficientBalance();
         }
 
@@ -738,13 +707,27 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidOutput();
         }
 
-        /// @dev Reduce the portalEnergy balance of the user by the amount of portalEnergy sold
-        accounts[msg.sender].portalEnergy -= _amountInput;
+        /// @dev Calculate the caller´s post-trade Portal Energy balance
+        portalEnergy -= _amountInput;
 
-        /// @dev Send the output token to the user
+        /// @dev Calculate the updated available amount of principal for withdrawal
+        availableToWithdraw = portalEnergy >= maxStakeDebt
+            ? stakedBalance
+            : (stakedBalance * portalEnergy) / maxStakeDebt;
+
+        /// @dev Update the user´s stake struct
+        _updateAccount(
+            user,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
+        );
+
+        /// @dev Send the output token to the recipient
         IERC20(PSM_ADDRESS).safeTransfer(_recipient, amountReceived);
 
-        /// @dev Emit the portalEnergySellExecuted event with the user's address and the amount of portalEnergy sold
+        /// @dev Emit the portalEnergySellExecuted event
         emit PortalEnergySellExecuted(msg.sender, _recipient, _amountInput);
     }
 
@@ -1083,21 +1066,40 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Get the current portalEnergy of the user
-        (, , , , , uint256 portalEnergy, ) = getUpdateAccount(msg.sender, 0);
+        /// @dev Get the current status of the user´s stake
+        (
+            address user,
+            ,
+            ,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = getUpdateAccount(msg.sender, 0, true);
 
         /// @dev Check that the caller has sufficient portalEnergy to mint the amount of portalEnergyToken
         if (portalEnergy < _amount) {
             revert InsufficientBalance();
         }
 
-        /// @dev Update the user´s stake data
-        _updateAccount(msg.sender, 0);
+        /// @dev Reduce the portalEnergy of the caller by the amount of minted tokens
+        portalEnergy -= _amount;
 
-        /// @dev Reduce the portalEnergy of the caller by the amount of portal energy tokens to be minted
-        accounts[msg.sender].portalEnergy -= _amount;
+        /// @dev Calculate the updated available amount of principal for withdrawal
+        availableToWithdraw = portalEnergy >= maxStakeDebt
+            ? stakedBalance
+            : (stakedBalance * portalEnergy) / maxStakeDebt;
 
-        /// @dev Deduct the LP Protection Hurdle from the minted amount to prevent indirect sandwich attacks
+        /// @dev Update the user´s stake struct
+        _updateAccount(
+            user,
+            stakedBalance,
+            maxStakeDebt,
+            portalEnergy,
+            availableToWithdraw
+        );
+
+        /// @dev Subtract the LP Protection Hurdle from the minted amount to prevent indirect sandwich attacks
         uint256 mintedAmount = (_amount * (100 - LP_PROTECTION_HURDLE)) / 100;
 
         /// @dev Mint portal energy tokens to the recipient's wallet
@@ -1107,7 +1109,7 @@ contract PortalV2 is ReentrancyGuard {
         emit PortalEnergyMinted(address(msg.sender), _recipient, mintedAmount);
     }
 
-    /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of recipient equally
+    /// @notice Burn portalEnergyToken from caller wallet and increase portalEnergy of recipient
     /// @param _recipient The recipient of the portalEnergy increase
     /// @param _amount The amount of portalEnergyToken to burn
     function burnPortalEnergyToken(
@@ -1119,14 +1121,9 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidInput();
         }
 
-        /// @dev Require that the recipient has a stake position
-        if (accounts[_recipient].isExist == false) {
-            revert AccountDoesNotExist();
-        }
-
         /// @dev Require that the caller has sufficient tokens to burn
         if (portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {
-            revert InsufficientBalance();
+            revert InsufficientPEtokens();
         }
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
@@ -1144,11 +1141,16 @@ contract PortalV2 is ReentrancyGuard {
     /// @param _user The user whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {
-        /// @dev Burn portalEnergyToken from the caller's wallet
-        portalEnergyToken.burnFrom(_user, _amount);
+        /// @dev Check that the caller has sufficient tokens to burn
+        if (portalEnergyToken.balanceOf(address(_user)) < _amount) {
+            revert InsufficientPEtokens();
+        }
 
         /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
         accounts[_user].portalEnergy += _amount;
+
+        /// @dev Burn portalEnergyToken from the caller's wallet
+        portalEnergyToken.burnFrom(_user, _amount);
     }
 
     /// @notice Update the maximum lock duration up to the terminal value
@@ -1175,12 +1177,14 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice Simulate updating a user stake position and return the values without updating the struct
+    /// @dev Returns the simulated up-to-date user stake information
     /// @param _user The user whose stake position is to be updated
     /// @param _amount The amount to add to the user's stake position
-    /// @dev Returns the simulated up-to-date user stake information
+    /// @param _isPositiveAmount True for staking, false for unstaking
     function getUpdateAccount(
         address _user,
-        uint256 _amount
+        uint256 _amount,
+        bool _isPositiveAmount
     )
         public
         view
@@ -1194,21 +1198,50 @@ contract PortalV2 is ReentrancyGuard {
             uint256 availableToWithdraw
         )
     {
-        /// @dev Check if the queried user has an account and revert if not
-        if (!accounts[_user].isExist) {
-            revert AccountDoesNotExist();
+        /// @dev Load user account into memory
+        Account memory account = accounts[_user];
+
+        /// @dev initialize helper variables
+        uint256 portalEnergyEarned;
+        uint256 portalEnergyIncrease;
+        uint256 portalEnergyNetChange;
+        uint256 portalEnergyAdjustment;
+
+        /// @dev Check the user´s account status based on lastUpdateTime
+        /// @dev If this variable is 0, the user never staked and could not earn PE
+        if (account.lastUpdateTime != 0) {
+            /// @dev Calculate the Portal Energy earned since the last update
+            portalEnergyEarned = (account.stakedBalance *
+                (block.timestamp - account.lastUpdateTime) *
+                1e18);
+
+            /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
+            portalEnergyIncrease = (account.stakedBalance *
+                (maxLockDuration - account.lastMaxLockDuration) *
+                1e18);
+
+            /// @dev Summarize Portal Energy changes and divide by common denominator
+            portalEnergyNetChange =
+                (portalEnergyEarned + portalEnergyIncrease) /
+                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         }
 
-        /// @dev Calculate the portalEnergy earned since the last update
-        uint256 portalEnergyEarned = (accounts[_user].stakedBalance *
-            (block.timestamp - accounts[_user].lastUpdateTime) *
-            1e18) / (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Calculate the increase of portalEnergy due to balance increase
-        uint256 portalEnergyIncrease = ((accounts[_user].stakedBalance *
-            (maxLockDuration - accounts[_user].lastMaxLockDuration) +
-            (_amount * maxLockDuration)) * 1e18) /
+        /// @dev Calculate the adjustment of Portal Energy from balance change
+        portalEnergyAdjustment =
+            ((_amount * maxLockDuration) * 1e18) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+
+        /// @dev Check that user has enough Portal Energy in case of unstaking
+        if (
+            !_isPositiveAmount && portalEnergyAdjustment > account.portalEnergy
+        ) {
+            revert InsufficientToWithdraw();
+        }
+
+        /// @dev Check that the Stake Balance is sufficient for unstaking
+        if (!_isPositiveAmount && _amount > account.stakedBalance) {
+            revert InsufficientStake();
+        }
 
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
@@ -1216,26 +1249,29 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Get the updated last maxLockDuration
         lastMaxLockDuration = maxLockDuration;
 
-        /// @dev Calculate the user's staked balance
-        stakedBalance = accounts[_user].stakedBalance + _amount;
+        /// @dev Calculate the user's staked balance and consider stake or unstake
+        stakedBalance = _isPositiveAmount
+            ? account.stakedBalance + _amount
+            : account.stakedBalance - _amount;
 
         /// @dev Update the user's max stake debt
         maxStakeDebt =
             (stakedBalance * maxLockDuration * 1e18) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
-        /// @dev Update the user's portalEnergy by adding the portalEnergy earned since the last update
-        portalEnergy =
-            accounts[_user].portalEnergy +
-            portalEnergyEarned +
-            portalEnergyIncrease;
+        /// @dev Update the user's portalEnergy and account for stake or unstake
+        portalEnergy = _isPositiveAmount
+            ? account.portalEnergy +
+                portalEnergyNetChange +
+                portalEnergyAdjustment
+            : account.portalEnergy +
+                portalEnergyNetChange -
+                portalEnergyAdjustment;
 
-        /// @dev Update the amount available to unstake based on the updated portalEnergy and max stake debt
-        if (portalEnergy >= maxStakeDebt) {
-            availableToWithdraw = stakedBalance;
-        } else {
-            availableToWithdraw = (stakedBalance * portalEnergy) / maxStakeDebt;
-        }
+        /// @dev Update of amount available
+        availableToWithdraw = portalEnergy >= maxStakeDebt
+            ? stakedBalance
+            : (stakedBalance * portalEnergy) / maxStakeDebt;
 
         /// @dev Set the user for the return values
         user = _user;
@@ -1256,12 +1292,12 @@ contract PortalV2 is ReentrancyGuard {
             uint256 maxStakeDebt,
             uint256 portalEnergy,
 
-        ) = getUpdateAccount(_user, 0);
+        ) = getUpdateAccount(_user, 0, false);
 
-        /// @dev Calculate how many portal energy tokens must be burned for a full unstake
-        if (maxStakeDebt > portalEnergy) {
-            portalEnergyTokenToBurn = maxStakeDebt - portalEnergy;
-        }
+        /// @dev Calculate how many Portal Energy Tokens must be burned for a full unstake
+        portalEnergyTokenToBurn = maxStakeDebt > portalEnergy
+            ? maxStakeDebt - portalEnergy
+            : 0;
     }
 
     receive() external payable {}
