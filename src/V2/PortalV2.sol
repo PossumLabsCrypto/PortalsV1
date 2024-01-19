@@ -14,39 +14,39 @@ import {IRewarder} from "./interfaces/IRewarder.sol";
 // ==          CUSTOM ERROR MESSAGES         ==
 // ============================================
 error DeadlineExpired();
-error PortalNotActive();
-error PortalAlreadyActive();
-error AccountDoesNotExist();
-error InsufficientToWithdraw();
-error InsufficientStake();
-error InsufficientPEtokens();
-error InsufficientBalance();
-error InvalidOutput();
-error InvalidInput();
-error InvalidAddress();
-error InvalidAmount();
+error DurationLocked();
+error DurationBelowCurrent();
+error FailedToSendNativeToken();
 error FundingPhaseOngoing();
 error FundingInsufficient();
+error InsufficientBalance();
 error InsufficientRewards();
-error DurationLocked();
-error DurationCannotIncrease();
-error FailedToSendNativeToken();
+error InsufficientReceived();
+error InsufficientStakeBalance();
+error InsufficientToWithdraw();
+error InvalidAddress();
+error InvalidAmount();
+error InvalidConstructor();
+error PortalNotActive();
+error PortalAlreadyActive();
 error TokenExists();
 
-/// @title Portal Contract
+/// @title Portal Contract V2
 /// @author Possum Labs
 /** @notice This contract accepts user deposits and withdrawals of a specific token
  * The deposits are redirected to an external protocol to generate yield
- * Yield is claimed and collected into this contract
+ * Yield is claimed and collected with this contract
  * Users accrue portalEnergy points over time while staking their tokens
  * portalEnergy can be exchanged against the PSM token using the internal Liquidity Pool or minted as ERC20
+ * PortalEnergy Tokens can be burned to increase a recipient´s internal portalEnergy balance
+ * Users can buy more portalEnergy via the internal LP by spending PSM
  * The contract can receive PSM tokens during the funding phase and issues bTokens as receipt
+ * bTokens received during the funding phase are used to initialize the internal LP
  * bTokens can be redeemed against the fundingRewardPool which consists of PSM tokens
  * The fundingRewardPool is filled over time by taking a 10% cut from the Converter
  * The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token
- * When triggering the Converter, the arbitrager must send a fixed amount of PSM tokens to the contract
+ * When triggering the Converter, the caller (arbitrager) must send a fixed amount of PSM tokens to the contract
  */
-
 contract PortalV2 is ReentrancyGuard {
     constructor(
         uint256 _FUNDING_PHASE_DURATION,
@@ -54,32 +54,28 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _FUNDING_EXCHANGE_RATIO,
         address _PRINCIPAL_TOKEN_ADDRESS,
         uint256 _DECIMALS,
-        uint256 _TERMINAL_MAX_LOCK_DURATION,
         uint256 _AMOUNT_TO_CONVERT
     ) {
         if (
             _FUNDING_PHASE_DURATION < 259200 ||
             _FUNDING_PHASE_DURATION > 2592000
         ) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
         if (_FUNDING_MIN_AMOUNT == 0) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
         if (_FUNDING_EXCHANGE_RATIO == 0) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
         if (_PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
         if (_DECIMALS == 0) {
-            revert InvalidInput();
-        }
-        if (_TERMINAL_MAX_LOCK_DURATION < maxLockDuration) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
         if (_AMOUNT_TO_CONVERT == 0) {
-            revert InvalidInput();
+            revert InvalidConstructor();
         }
 
         FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
@@ -87,7 +83,6 @@ contract PortalV2 is ReentrancyGuard {
         FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
-        TERMINAL_MAX_LOCK_DURATION = _TERMINAL_MAX_LOCK_DURATION;
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
     }
@@ -98,27 +93,27 @@ contract PortalV2 is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // general
-    MintBurnToken public bToken; // the receipt token from bootstrapping
+    MintBurnToken public bToken; // the receipt token for funding the Portal
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     bool public bTokenCreated; // flag for bToken creation
     bool public portalEnergyTokenCreated; // flag for PE token creation
 
     address public constant PSM_ADDRESS =
         0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
-    uint256 public immutable AMOUNT_TO_CONVERT; // constant amount of PSM tokens required to withdraw yield in the contract
-    uint256 public immutable TERMINAL_MAX_LOCK_DURATION; // terminal maximum lock duration of a user´s balance in seconds
-    uint256 public immutable CREATION_TIME; // time stamp of deployment
+    uint256 public constant TERMINAL_MAX_LOCK_DURATION = 157680000; // terminal maximum lock duration of a user´s stake in seconds (5y)
     uint256 private constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
+    uint256 public immutable AMOUNT_TO_CONVERT; // fixed amount of PSM tokens required to withdraw yield in the contract
+    uint256 public immutable CREATION_TIME; // time stamp of deployment
     uint256 public maxLockDuration = 7776000; // starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
     uint256 public totalPrincipalStaked; // shows how much principal is staked by all users combined
     bool private lockDurationUpdateable = true; // flag to signal if the lock duration can still be updated
 
     // principal management related
-    address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit (HLP)
+    address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
+
     address payable private constant COMPOUNDER_ADDRESS =
         payable(0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
-
     address payable private constant HLP_STAKING =
         payable(0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
     address private constant HLP_PROTOCOL_REWARDER =
@@ -141,25 +136,23 @@ contract PortalV2 is ReentrancyGuard {
 
     // bootstrapping related
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds that the funding phase lasts before Portal can be activated
-
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
-    uint256 public constant FUNDING_APR = 50; // redemption value appreciation rate of bTokens
+    uint256 public constant FUNDING_APR = 50; // redemption value APR increase of bTokens
     uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
     uint256 public fundingBalance; // sum of all PSM funding contributions
     uint256 public fundingRewardPool; // amount of PSM available for redemption against bTokens
-    bool public isActivePortal; // Start with false, will be set to true when funding phase ends.
+    bool public isActivePortal; // Start with false, will be set to true when funding phase ends
 
     // exchange related
     uint256 private immutable FUNDING_EXCHANGE_RATIO; // amount of portalEnergy per PSM for calculating k during funding process
-    uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
     uint256 public constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
+    uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
 
     // staking related
-    // contains information of user stake positions
+    // contains information of user stake position
     struct Account {
-        bool isExist;
         uint256 lastUpdateTime;
         uint256 lastMaxLockDuration;
         uint256 stakedBalance;
@@ -170,9 +163,13 @@ contract PortalV2 is ReentrancyGuard {
     mapping(address => Account) public accounts; // Associate users with their stake position
 
     // --- Events related to the funding phase ---
-    event PortalActivated(address indexed, uint256 fundingBalance);
+    event bTokenDeployed(address bToken);
+    event PortalEnergyTokenDeployed(address PortalEnergyToken);
+
     event FundingReceived(address indexed, uint256 amount);
     event FundingWithdrawn(address indexed, uint256 amount);
+    event PortalActivated(address indexed, uint256 fundingBalance);
+
     event RewardsRedeemed(
         address indexed,
         uint256 amountBurned,
@@ -191,6 +188,13 @@ contract PortalV2 is ReentrancyGuard {
         uint256 amount
     );
 
+    event ConvertExecuted(
+        address indexed token,
+        address indexed caller,
+        address indexed recipient,
+        uint256 amount
+    );
+
     // --- Events related to minting and burning portalEnergyToken ---
     event PortalEnergyMinted(
         address indexed,
@@ -198,7 +202,7 @@ contract PortalV2 is ReentrancyGuard {
         uint256 amount
     );
     event PortalEnergyBurned(
-        address indexed,
+        address indexed caller,
         address recipient,
         uint256 amount
     );
@@ -220,7 +224,9 @@ contract PortalV2 is ReentrancyGuard {
         uint256 maxStakeDebt,
         uint256 portalEnergy,
         uint256 availableToWithdraw
-    ); // principal available to withdraw
+    );
+
+    event MaxLockDurationUpdated(uint256 newDuration);
 
     // ============================================
     // ==               MODIFIERS                ==
@@ -235,13 +241,6 @@ contract PortalV2 is ReentrancyGuard {
     modifier nonActivePortalCheck() {
         if (isActivePortal) {
             revert PortalAlreadyActive();
-        }
-        _;
-    }
-
-    modifier existingAccount() {
-        if (!accounts[msg.sender].isExist) {
-            revert AccountDoesNotExist();
         }
         _;
     }
@@ -276,17 +275,15 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Stake the principal token into the Portal & redirect principal to yield source
     /// @dev This function allows users to stake their principal tokens into the Portal
-    /// @dev It checks if the Portal is active
-    /// @dev It transfers the user's principal tokens to the contract
-    /// @dev It updates the total stake balance
-    /// @dev It deposits the principal into the yield source (external protocol)
-    /// @dev It checks if the user has a staking position, else it initializes a new stake
-    /// @dev It emits an event with the updated stake information
+    /// @dev Can only be called if Portal is active
+    /// @dev Update the user´s account
+    /// @dev Update the global tracker of staked principal
+    /// @dev Deposit the principal into the yield source (external protocol)
     /// @param _amount The amount of tokens to stake
     function stake(uint256 _amount) external nonReentrant activePortalCheck {
-        /// @dev Require that the staked amount is greater than zero
+        /// @dev Revert if the staked amount is zero
         if (_amount == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Get the current status of the user´s stake
@@ -335,24 +332,20 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice Serve unstaking requests & withdraw principal from yield source
-    /// @dev This function allows users to unstake their tokens and withdraw the principal from the yield source
-    /// @dev It checks if the user has a stake and updates the user's stake data
-    /// @dev It checks if the amount to be unstaked is less than or equal to the available withdrawable balance and the staked balance
-    /// @dev It withdraws the matching amount of principal from the yield source (external protocol)
-    /// @dev It updates the user's staked balance
-    /// @dev It updates the user's maximum stake debt
-    /// @dev It updates the user's withdrawable balance
-    /// @dev It updates the global tracker of staked principal
-    /// @dev It sends the principal tokens to the user
-    /// @dev It emits an event with the updated stake information
+    /// @dev This function allows users to unstake their tokens
+    /// @dev Update the user´s account
+    /// @dev Update the global tracker of staked principal
+    /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
+    /// @dev Send the principal tokens to the user
     /// @param _amount The amount of tokens to unstake
-    function unstake(uint256 _amount) external nonReentrant existingAccount {
+    function unstake(uint256 _amount) external nonReentrant {
         /// @dev Require that the unstaked amount is greater than zero
         if (_amount == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Get the current status of the user´s stake
+        /// @dev Throws if caller tries to unstake more than stake balance or with insufficient PE
         (
             address user,
             uint256 lastUpdateTime,
@@ -386,7 +379,7 @@ contract PortalV2 is ReentrancyGuard {
         );
         uint256 availableAmount = balanceAfter - balanceBefore;
 
-        /// @dev Send the principal tokens to the user
+        /// @dev Send the recovered principal tokens to the user
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
             msg.sender,
             availableAmount
@@ -405,15 +398,14 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice Force unstaking via burning portalEnergyToken from user wallet to decrease debt sufficiently
-    /// @dev This function allows users to force unstake all their tokens by burning portalEnergyToken from their wallet
-    /// @dev It checks if the user has a stake and updates the user's stake data
-    /// @dev It calculates how many portalEnergyToken must be burned from the user's wallet, if any
-    /// @dev It burns the appropriate portalEnergyToken from the user's wallet to increase portalEnergy sufficiently
-    /// @dev It withdraws the principal from the yield source to pay the user
-    /// @dev It updates the user's information
-    /// @dev It sends the full stake balance to the user
-    /// @dev It emits an event with the updated stake information
-    function forceUnstakeAll() external nonReentrant existingAccount {
+    /// @dev This function allows users to force unstake all of their tokens by burning portalEnergyToken from their wallet
+    /// @dev Calculate how many portalEnergyToken must be burned from the user's wallet, if any
+    /// @dev Burn the appropriate amount of portalEnergyToken from the user's wallet to increase portalEnergy
+    /// @dev Update the user's stake data
+    /// @dev Update the global tracker of staked principal
+    /// @dev Withdraw the principal from the yield source (external protocol)
+    /// @dev Send the retrieved stake balance to the user
+    function forceUnstakeAll() external nonReentrant {
         /// @dev Get the current status of the user´s stake
         (
             ,
@@ -430,13 +422,14 @@ contract PortalV2 is ReentrancyGuard {
             uint256 remainingDebt = maxStakeDebt - portalEnergy;
 
             /// @dev Burn portalEnergyToken from the caller to increase portalEnergy sufficiently
+            /// @dev Throws if caller has not enough tokens or allowance is too low
             _burnPortalEnergyToken(msg.sender, remainingDebt);
         }
 
         /// @dev initialize helper variable
         uint256 oldStakedBalance = stakedBalance;
 
-        /// @dev Calculate the new values of the user`s stake
+        /// @dev Calculate the new values of the user´s stake
         stakedBalance = 0;
         maxStakeDebt = 0;
         portalEnergy -=
@@ -487,14 +480,37 @@ contract PortalV2 is ReentrancyGuard {
         );
     }
 
+    /// @notice Simulate forced unstake and return the number of portal energy tokens to be burned
+    /// @dev Simulate forced unstake and return the number of portal energy tokens to be burned
+    /// @param _user The user whose stake position is to be updated for the simulation
+    /// @return portalEnergyTokenToBurn Returns the number of portal energy tokens to be burned for a full unstake
+    function quoteforceUnstakeAll(
+        address _user
+    ) external view returns (uint256 portalEnergyTokenToBurn) {
+        /// @dev Get the relevant data from the simulated account update
+        (
+            ,
+            ,
+            ,
+            ,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+
+        ) = getUpdateAccount(_user, 0, false);
+
+        /// @dev Calculate how many Portal Energy Tokens must be burned for a full unstake
+        portalEnergyTokenToBurn = maxStakeDebt > portalEnergy
+            ? maxStakeDebt - portalEnergy
+            : 0;
+    }
+
     // ============================================
     // ==      PRINCIPAL & REWARD MANAGEMENT     ==
     // ============================================
-    /// @notice Deposit principal into yield source
+    /// @notice Deposit principal into the yield source
     /// @dev This function deposits principal tokens from the Portal into the external protocol
-    /// @dev It approves the amount of tokens to be transferred
-    /// @dev It transfers the tokens from the Portal to the external protocol via interface
-    /// @dev It emits an Event that tokens have been staked
+    /// @dev Approve the amount of tokens to be transferred
+    /// @dev Transfer the tokens from the Portal to the external protocol via interface
     function _depositToYieldSource(uint256 _amount) private {
         /// @dev Approve the amount to be transferred
         IERC20(PRINCIPAL_TOKEN_ADDRESS).safeIncreaseAllowance(
@@ -509,10 +525,9 @@ contract PortalV2 is ReentrancyGuard {
         emit TokenStaked(msg.sender, _amount);
     }
 
-    /// @notice Withdraw principal from yield source into this contract
+    /// @notice Withdraw principal from the yield source to the Portal
     /// @dev This function withdraws principal tokens from the external protocol to the Portal
     /// @dev It transfers the tokens from the external protocol to the Portal via interface
-    /// @dev It emits an Event that tokens have been unstaked
     /// @param _amount The amount of tokens to withdraw
     function _withdrawFromYieldSource(uint256 _amount) private {
         /// @dev Withdraw the staked balance from external protocol using the interface
@@ -524,8 +539,7 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Claim rewards related to HLP and HMX staked by this contract
     /// @dev This function claims staking rewards from the external protocol to the Portal
-    /// @dev It transfers the tokens from the external protocol to the Portal via interface
-    /// @dev It emits an Event that tokens have been claimed
+    /// @dev Transfer the tokens from the external protocol to the Portal via interface
     function claimRewardsHLPandHMX() external {
         /// @dev Initialize the first input array for the compounder and assign values
         address[] memory pools = new address[](2);
@@ -565,7 +579,7 @@ contract PortalV2 is ReentrancyGuard {
         address[][] memory _rewarders
     ) external {
         /// @dev claim rewards from any staked token and any rewarder via interface
-        /// @dev esHMX and DP rewards are staked automatically, USDC or other reward tokens are transferred to contract
+        /// @dev esHMX and DP rewards are staked automatically, USDC or other reward tokens are transferred to Portal
         ICompounder(COMPOUNDER_ADDRESS).compound(
             _pools,
             _rewarders,
@@ -579,8 +593,9 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice View claimable yield from a specific rewarder contract of the yield source
-    /// @dev This function allows you to view the claimable yield from a specific rewarder contract of the yield source
+    /// @dev This function shows the claimable yield from a specific rewarder contract of the yield source
     /// @param _rewarder The rewarder contract whose pending reward is to be viewed
+    /// @return claimableReward The amount of claimable tokens from this rewarder
     function getPendingRewards(
         address _rewarder
     ) external view returns (uint256 claimableReward) {
@@ -592,12 +607,10 @@ contract PortalV2 is ReentrancyGuard {
     // ============================================
     /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
     /// @dev This function allows users to sell PSM tokens to the contract to increase a recipient´s portalEnergy
-    /// @dev Check if the Portal is active
-    /// @dev Perform input validation
-    /// @dev Check if the amount of portalEnergy received is greater than or equal to the minimum expected output
+    /// @dev Can only be called if the Portal is active
+    /// @dev Get the correct price from the quote function
     /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
     /// @dev Transfer the PSM tokens from the caller to the contract
-    /// @dev Emit the portalEnergyBuyExecuted event
     /// @param _recipient The recipient of the Portal Energy credit
     /// @param _amountInput The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
@@ -610,12 +623,12 @@ contract PortalV2 is ReentrancyGuard {
     ) external nonReentrant activePortalCheck {
         /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Check that the recipient is a valid address
         if (_recipient == address(0)) {
-            revert InvalidInput();
+            revert InvalidAddress();
         }
 
         /// @dev Check that the deadline has not expired
@@ -633,7 +646,7 @@ contract PortalV2 is ReentrancyGuard {
 
         /// @dev Check that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
-            revert InvalidOutput();
+            revert InsufficientReceived();
         }
 
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
@@ -650,16 +663,12 @@ contract PortalV2 is ReentrancyGuard {
         emit PortalEnergyBuyExecuted(msg.sender, _recipient, amountReceived);
     }
 
-    /// @notice Sell portalEnergy into contract to receive PSM
-    /// @dev This function allows users to sell their portalEnergy to the contract to receive PSM tokens
-    /// @dev It checks if the user has a stake and updates the stake data
-    /// @dev It checks if the user has enough portalEnergy to sell
-    /// @dev It updates the output token reserve and calculates the reserve of portalEnergy (Input)
-    /// @dev It calculates the amount of output token received based on the amount of portalEnergy sold
-    /// @dev It checks if the amount of output token received is greater than or equal to the minimum expected output
-    /// @dev It reduces the portalEnergy balance of the user by the amount of portalEnergy sold
-    /// @dev It sends the output token to the user
-    /// @dev It emits a portalEnergySellExecuted event
+    /// @notice Users sell portalEnergy into the Portal to receive PSM to a recipient address
+    /// @dev This function allows users to sell portalEnergy to the contract to increase a recipient´s PSM
+    /// @dev Can only be called if the Portal is active
+    /// @dev Get the correct price from the quote function
+    /// @dev Reduce the portalEnergy balance of the caller by the amount of portalEnergy sold
+    /// @dev Send PSM to the recipient
     /// @param _amountInput The amount of portalEnergy to sell
     /// @param _minReceived The minimum amount of PSM tokens to receive
     function sellPortalEnergy(
@@ -670,12 +679,12 @@ contract PortalV2 is ReentrancyGuard {
     ) external nonReentrant activePortalCheck {
         /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Check that the recipient is a valid address
         if (_recipient == address(0)) {
-            revert InvalidInput();
+            revert InvalidAddress();
         }
 
         /// @dev Check that the deadline has not expired
@@ -702,9 +711,9 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Calculate the amount of output token received based on the amount of portalEnergy sold
         uint256 amountReceived = quoteSellPortalEnergy(_amountInput);
 
-        /// @dev Require that the amount of output token received is greater than or equal to the minimum expected output
+        /// @dev Check that the amount of output token received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
-            revert InvalidOutput();
+            revert InsufficientReceived();
         }
 
         /// @dev Calculate the caller´s post-trade Portal Energy balance
@@ -725,7 +734,7 @@ contract PortalV2 is ReentrancyGuard {
         );
 
         /// @dev Send the output token to the recipient
-        IERC20(PSM_ADDRESS).safeTransfer(_recipient, amountReceived);
+        IERC20(PSM_ADDRESS).transfer(_recipient, amountReceived);
 
         /// @dev Emit the portalEnergySellExecuted event
         emit PortalEnergySellExecuted(msg.sender, _recipient, _amountInput);
@@ -733,6 +742,9 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
+    /// @dev Can only be called if the Portal is active
+    /// @dev Update the token reserves to get the exchange price
+    /// @return amountReceived The amount of portalEnergy received by the recipient
     function quoteBuyPortalEnergy(
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
@@ -752,6 +764,9 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
+    /// @dev Can only be called if the Portal is active
+    /// @dev Update the token reserves to get the exchange price
+    /// @return amountReceived The amount of PSM tokens received by the recipient
     function quoteSellPortalEnergy(
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
@@ -774,12 +789,11 @@ contract PortalV2 is ReentrancyGuard {
     // ============================================
     /// @notice Handle the arbitrage conversion of tokens inside the contract for PSM tokens
     /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
-    /// @dev Perform multiple checks for invalid values and frontrun protection
-    /// @dev Collect rewards for funders and redirect reward overflow to the internal LP
-    /// @dev Transfer the input (PSM) token from the user to the contract
-    /// @dev Transfer the output token from the contract to the user
-    /// @param _token The token to convert
-    /// @param _minReceived The minimum amount of tokens to receive
+    /// @dev Collect rewards for funders and reallocate reward overflow to the internal LP (indirect)
+    /// @dev Transfer the input (PSM) token from the caller to the contract
+    /// @dev Transfer the specified output token from the contract to the caller
+    /// @param _token The token to be obtained by the recipient
+    /// @param _minReceived The minimum amount of tokens received
     function convert(
         address _token,
         address _recipient,
@@ -811,7 +825,7 @@ contract PortalV2 is ReentrancyGuard {
 
         /// @dev Check that enough output tokens are available for frontrun protection
         if (contractBalance < _minReceived) {
-            revert InsufficientBalance();
+            revert InsufficientReceived();
         }
 
         /// @dev Check for reward overflow and reallocate rewards to internal LP if necessary (passive)
@@ -846,22 +860,47 @@ contract PortalV2 is ReentrancyGuard {
         } else {
             IERC20(_token).safeTransfer(_recipient, contractBalance);
         }
+
+        emit ConvertExecuted(_token, msg.sender, _recipient, contractBalance);
     }
 
     // ============================================
-    // ==              BOOTSTRAPPING             ==
+    // ==                FUNDING                 ==
     // ============================================
-    /// @notice Allow users to deposit PSM to provide initial upfront yield
-    /// @dev This function allows users to deposit PSM tokens during the funding phase of the contract
-    /// @dev The contract must be the owner of the specific bToken
-    /// @dev It increases the fundingBalance tracker by the amount of PSM deposited
-    /// @dev It transfers the PSM tokens from the user to the contract
-    /// @dev It mints bTokens to the user and emits a FundingReceived event
+    /// @notice End the funding phase and enable normal contract functionality
+    /// @dev This function activates the portal and initializes the internal LP
+    /// @dev Can only be called when the Portal is inactive
+    /// @dev Calculate the constant product K, which is used to initialize the internal LP
+    function activatePortal() external nonActivePortalCheck {
+        /// @dev Check that the funding phase is over and enough funding has been contributed
+        if (block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {
+            revert FundingPhaseOngoing();
+        }
+        if (fundingBalance < FUNDING_MIN_AMOUNT) {
+            revert FundingInsufficient();
+        }
+
+        /// @dev Activate the portal
+        isActivePortal = true;
+
+        /// @dev Set the constant product K, which is used in the calculation of the amount of assets in the LP
+        constantProduct = fundingBalance ** 2 / FUNDING_EXCHANGE_RATIO;
+
+        /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
+        emit PortalActivated(address(this), fundingBalance);
+    }
+
+    /// @notice Allow users to deposit PSM to provide the initial upfront yield
+    /// @dev This function allows users to deposit PSM tokens during the funding phase
+    /// @dev The bToken must have been deployed via the contract in advance
+    /// @dev Increase the fundingBalance tracker by the amount of PSM deposited
+    /// @dev Transfer the PSM tokens from the user to the contract
+    /// @dev Mint bTokens to the user
     /// @param _amount The amount of PSM to deposit
     function contributeFunding(uint256 _amount) external nonActivePortalCheck {
         /// @dev Prevent zero amount transaction
         if (_amount == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Calculate the amount of bTokens to be minted based on the maximum return
@@ -882,15 +921,15 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Allow users to burn bTokens to recover PSM funding before the Portal is activated
     /// @dev This function allows users to withdraw PSM tokens during the funding phase of the contract
-    /// @dev The contract must be the owner of the specific bToken
-    /// @dev It decreases the fundingBalance tracker by the amount of PSM withdrawn
-    /// @dev It burns the appropriate amount of bTokens from the user
-    /// @dev It transfers the PSM tokens from the contract to the user
+    /// @dev The bToken must have been deployed via the contract in advance
+    /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
+    /// @dev Burn the appropriate amount of bTokens from the caller
+    /// @dev Transfer the PSM tokens from the contract to the caller
     /// @param _amount The amount of bTokens burned to withdraw PSM
     function withdrawFunding(uint256 _amount) external nonActivePortalCheck {
         /// @dev Prevent zero amount transaction
         if (_amount == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
         }
 
         /// @dev Calculate the amount of PSM returned to the user
@@ -909,7 +948,7 @@ contract PortalV2 is ReentrancyGuard {
         emit FundingWithdrawn(msg.sender, withdrawAmount);
     }
 
-    /// @notice Calculate the current burn value of bTokens. Return value is PSM tokens
+    /// @notice Calculate the current burn value of bTokens
     /// @param _amount The amount of bTokens to burn
     /// @return burnValue The amount of PSM received when redeeming bTokens
     function getBurnValuePSM(
@@ -929,19 +968,38 @@ contract PortalV2 is ReentrancyGuard {
         burnValue = (currentValue < maxValue) ? currentValue : maxValue;
     }
 
-    /// @notice Burn user bTokens to receive PSM
+    /// @notice Get the amount of bTokens that can be burned against the reward Pool
+    /// @dev Calculate how many bTokens can be burned to redeem the full reward Pool
+    /// @return amountBurnable The amount of bTokens that can be redeemed for rewards
+    function getBurnableBtokenAmount()
+        public
+        view
+        returns (uint256 amountBurnable)
+    {
+        /// @dev Calculate the burn value of 1 full bToken in PSM
+        /// @dev Add 1 to handle potential rounding issue in the next step
+        burnValueFullToken = getBurnValuePSM(1e18) + 1;
+
+        /// @dev Calculate and return the amount of bTokens burnable
+        amountBurnable = (fundingRewardPool * 1e18) / burnValueFullToken;
+    }
+
+    /// @notice Users redeem bTokens for PSM tokens
     /// @dev This function allows users to burn bTokens to receive PSM when the Portal is active
-    /// @dev Check that the portal is active and if the burn amount is greater than zero
-    /// @dev Check that there are enough rewards in the pool to match the redemption value
-    /// @dev Calculate how many PSM the user receives based on the burn amount
-    /// @dev It reduces the funding reward pool by the amount of PSM payable to the user
-    /// @dev It burns the bTokens from the user's balance
-    /// @dev It transfers the PSM to the user
+    /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
+    /// @dev Burn the bTokens from the user's wallet
+    /// @dev Transfer the PSM tokens to the user
     /// @param _amount The amount of bTokens to burn
     function burnBtokens(uint256 _amount) external activePortalCheck {
         /// @dev Check that the burn amount is not zero
         if (_amount == 0) {
-            revert InvalidInput();
+            revert InvalidAmount();
+        }
+
+        /// @dev Check that the burn amount is not larger than what can be redeemed
+        uint256 burnable = getBurnableBtokenAmount();
+        if (_amount > burnable) {
+            revert InvalidAmount();
         }
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
@@ -965,38 +1023,13 @@ contract PortalV2 is ReentrancyGuard {
         emit RewardsRedeemed(msg.sender, _amount, amountToReceive);
     }
 
-    /// @notice End the funding phase and enable normal contract functionality
-    /// @dev This function activates the portal and prepares it for normal operation
-    /// @dev It checks if the portal is not already active and if the funding phase is over before proceeding
-    /// @dev It calculates the amount of portalEnergy to match the funding amount in the internal liquidity pool
-    /// @dev It sets the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
-    /// @dev It calculates the maximum rewards to be collected in PSM tokens over time
-    /// @dev It activates the portal and emits the PortalActivated event
-    /// @dev The PortalActivated event is emitted with the address of the contract and the funding balance
-    function activatePortal() external nonActivePortalCheck {
-        /// @dev Check that the funding phase is over and enough funding has been contributed
-        if (block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {
-            revert FundingPhaseOngoing();
-        }
-        if (fundingBalance < FUNDING_MIN_AMOUNT) {
-            revert FundingInsufficient();
-        }
-
-        /// @dev Set the constant product K, which is used in the calculation of the amount of assets in the liquidity pool
-        constantProduct = fundingBalance ** 2 / FUNDING_EXCHANGE_RATIO;
-
-        /// @dev Activate the portal
-        isActivePortal = true;
-
-        /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
-        emit PortalActivated(address(this), fundingBalance);
-    }
-
     // ============================================
     // ==           GENERAL FUNCTIONS            ==
     // ============================================
+
     /// @notice Concatenates two strings and returns the result string
-    /// @dev This is a helper function to concatenate strings for automatic token naming
+    /// @dev This is a helper function to concatenate two strings into one
+    /// @dev Used for automatic token naming
     function concatenate(
         string memory a,
         string memory b
@@ -1005,35 +1038,43 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice Deploy the bToken of this Portal
-    /// @dev This function deploys the bToken of this Portal. Limited to one function call.
-    function create_bToken() external nonReentrant {
+    /// @dev This function deploys the bToken of this Portal and sets the Portal as owner
+    /// @dev Can only be called once
+    function create_bToken() external {
         if (bTokenCreated) {
             revert TokenExists();
         }
-        /// @dev Build the token name and symbol based on the principal token of this Portal.
-        string memory name = concatenate(
-            "b",
-            ERC20(PRINCIPAL_TOKEN_ADDRESS).name()
-        );
-
-        string memory symbol = concatenate(
-            "b",
-            ERC20(PRINCIPAL_TOKEN_ADDRESS).symbol()
-        );
 
         /// @dev Update the token creation flag to prevent future calls.
         bTokenCreated = true;
 
+        /// @dev Build the token name and symbol based on the principal token of this Portal.
+        string memory name = concatenate(
+            "b",
+            ERC20(PRINCIPAL_TOKEN_ADDRESS).name()
+        );
+
+        string memory symbol = concatenate(
+            "b",
+            ERC20(PRINCIPAL_TOKEN_ADDRESS).symbol()
+        );
+
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
         bToken = new MintBurnToken(address(this), name, symbol);
+
+        emit bTokenDeployed(address(bToken));
     }
 
     /// @notice Deploy the Portal Energy Token of this Portal
-    /// @dev This function deploys the Portal Energy Token of this Portal. Limited to one function call.
-    function create_portalEnergyToken() external nonReentrant {
+    /// @dev This function deploys the PortalEnergyToken of this Portal and sets the Portal as owner
+    /// @dev Can only be called once
+    function create_portalEnergyToken() external {
         if (portalEnergyTokenCreated) {
             revert TokenExists();
         }
+
+        /// @dev Update the token creation flag to prevent future calls.
+        portalEnergyTokenCreated = true;
 
         /// @dev Build the token name and symbol based on the principal token of this Portal.
         string memory name = concatenate(
@@ -1046,24 +1087,182 @@ contract PortalV2 is ReentrancyGuard {
             ERC20(PRINCIPAL_TOKEN_ADDRESS).symbol()
         );
 
-        /// @dev Update the token creation flag to prevent future calls.
-        portalEnergyTokenCreated = true;
-
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
         portalEnergyToken = new MintBurnToken(address(this), name, symbol);
+
+        emit PortalEnergyTokenDeployed(address(portalEnergyToken));
     }
 
-    /// @notice Mint portalEnergyToken to recipient and decrease portalEnergy of caller equally
-    /// @dev Contract must be owner of the portalEnergyToken
+    /// @notice Simulate updating a user stake position and return the values without updating the struct
+    /// @dev Returns the simulated up-to-date user stake information
+    /// @param _user The user whose stake position is to be updated
+    /// @param _amount The amount to add or subtract from the user's stake position
+    /// @param _isPositiveAmount True for staking (add), false for unstaking (subtract)
+    function getUpdateAccount(
+        address _user,
+        uint256 _amount,
+        bool _isPositiveAmount
+    )
+        public
+        view
+        activePortalCheck
+        returns (
+            address user,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        )
+    {
+        /// @dev Load user account into memory
+        Account memory account = accounts[_user];
+
+        /// @dev initialize helper variables
+        uint256 portalEnergyEarned;
+        uint256 portalEnergyIncrease;
+        uint256 portalEnergyNetChange;
+        uint256 portalEnergyAdjustment;
+
+        /// @dev Check the user´s account status based on lastUpdateTime
+        /// @dev If this variable is 0, the user never staked and could not earn PE
+        if (account.lastUpdateTime != 0) {
+            /// @dev Calculate the Portal Energy earned since the last update
+            portalEnergyEarned = (account.stakedBalance *
+                (block.timestamp - account.lastUpdateTime) *
+                1e18);
+
+            /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
+            portalEnergyIncrease = (account.stakedBalance *
+                (maxLockDuration - account.lastMaxLockDuration) *
+                1e18);
+
+            /// @dev Summarize Portal Energy changes and divide by common denominator
+            portalEnergyNetChange =
+                (portalEnergyEarned + portalEnergyIncrease) /
+                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+        }
+
+        /// @dev Calculate the adjustment of Portal Energy from balance change
+        portalEnergyAdjustment =
+            ((_amount * maxLockDuration) * 1e18) /
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+
+        /// @dev Check that user has enough Portal Energy for unstaking
+        if (
+            !_isPositiveAmount && portalEnergyAdjustment > account.portalEnergy
+        ) {
+            revert InsufficientToWithdraw();
+        }
+
+        /// @dev Check that the Stake Balance is sufficient for unstaking
+        if (!_isPositiveAmount && _amount > account.stakedBalance) {
+            revert InsufficientStakeBalance();
+        }
+
+        /// @dev Set the last update time to the current timestamp
+        lastUpdateTime = block.timestamp;
+
+        /// @dev Get the updated last maxLockDuration
+        lastMaxLockDuration = maxLockDuration;
+
+        /// @dev Calculate the user's staked balance and consider stake or unstake
+        stakedBalance = _isPositiveAmount
+            ? account.stakedBalance + _amount
+            : account.stakedBalance - _amount;
+
+        /// @dev Update the user's max stake debt
+        maxStakeDebt =
+            (stakedBalance * maxLockDuration * 1e18) /
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+
+        /// @dev Update the user's portalEnergy and account for stake or unstake
+        portalEnergy = _isPositiveAmount
+            ? account.portalEnergy +
+                portalEnergyNetChange +
+                portalEnergyAdjustment
+            : account.portalEnergy +
+                portalEnergyNetChange -
+                portalEnergyAdjustment;
+
+        /// @dev Update of amount available
+        availableToWithdraw = portalEnergy >= maxStakeDebt
+            ? stakedBalance
+            : (stakedBalance * portalEnergy) / maxStakeDebt;
+
+        /// @dev Set the user for the return values
+        user = _user;
+    }
+
+    /// @notice Users can burn their PortalEnergyTokens to increase portalEnergy of a recipient
+    /// @dev This function allows users to burn PortalEnergyTokens for internal portalEnergy
+    /// @dev Burn PortalEnergyTokens of caller and increase portalEnergy of the recipient
+    /// @param _recipient The recipient of the portalEnergy increase
+    /// @param _amount The amount of portalEnergyToken to burn
+    function burnPortalEnergyToken(
+        address _recipient,
+        uint256 _amount
+    ) external {
+        /// @dev Check for zero value inputs
+        if (_amount == 0) {
+            revert InvalidIAmount();
+        }
+        if (_recipient == address(0)) {
+            revert InvalidAddress();
+        }
+
+        /// @dev Check that the caller has sufficient tokens to burn
+        if (portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {
+            revert InsufficientBalance();
+        }
+
+        /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
+        accounts[_recipient].portalEnergy += _amount;
+
+        /// @dev Burn portalEnergyToken from the caller's wallet
+        portalEnergyToken.burnFrom(msg.sender, _amount);
+
+        /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
+        emit PortalEnergyBurned(msg.sender, _recipient, _amount);
+    }
+
+    /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of user equally
+    /// @dev This function is private and can only be called internally
+    /// @param _user The address whose portalEnergy is to be increased
+    /// @param _amount The amount of portalEnergyToken to burn
+    function _burnPortalEnergyToken(address _user, uint256 _amount) private {
+        /// @dev Check that the caller has sufficient tokens to burn
+        if (portalEnergyToken.balanceOf(address(_user)) < _amount) {
+            revert InsufficientBalance();
+        }
+
+        /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
+        accounts[_user].portalEnergy += _amount;
+
+        /// @dev Burn portalEnergyToken from the caller's wallet
+        portalEnergyToken.burnFrom(_user, _amount);
+
+        /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
+        emit PortalEnergyBurned(_user, _user, _amount);
+    }
+
+    /// @notice Users can mint portalEnergyToken to a recipient address using their internal balance
+    /// @dev This function controls the minting of PortalEnergyToken
+    /// @dev Decrease portalEnergy of caller and mint PortalEnergyTokens to the recipient
+    /// @dev Contract must be owner of the PortalEnergyToken
     /// @param _recipient The recipient of the portalEnergyToken
     /// @param _amount The amount of portalEnergyToken to mint
     function mintPortalEnergyToken(
         address _recipient,
         uint256 _amount
-    ) external nonReentrant {
+    ) external {
         /// @dev Check for zero value inputs
-        if (_amount == 0 || _recipient == address(0)) {
-            revert InvalidInput();
+        if (_amount == 0) {
+            revert InvalidAmount();
+        }
+        if (_recipient == address(0)) {
+            revert InvalidAddress();
         }
 
         /// @dev Get the current status of the user´s stake
@@ -1109,51 +1308,8 @@ contract PortalV2 is ReentrancyGuard {
         emit PortalEnergyMinted(address(msg.sender), _recipient, mintedAmount);
     }
 
-    /// @notice Burn portalEnergyToken from caller wallet and increase portalEnergy of recipient
-    /// @param _recipient The recipient of the portalEnergy increase
-    /// @param _amount The amount of portalEnergyToken to burn
-    function burnPortalEnergyToken(
-        address _recipient,
-        uint256 _amount
-    ) external nonReentrant {
-        /// @dev Require that the burned amount is greater than zero
-        if (_amount == 0) {
-            revert InvalidInput();
-        }
-
-        /// @dev Require that the caller has sufficient tokens to burn
-        if (portalEnergyToken.balanceOf(address(msg.sender)) < _amount) {
-            revert InsufficientPEtokens();
-        }
-
-        /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
-        accounts[_recipient].portalEnergy += _amount;
-
-        /// @dev Burn portalEnergyToken from the caller's wallet
-        portalEnergyToken.burnFrom(msg.sender, _amount);
-
-        /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
-        emit PortalEnergyBurned(address(msg.sender), _recipient, _amount);
-    }
-
-    /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of user equally
-    /// @dev This function is private and can only be called internally
-    /// @param _user The user whose portalEnergy is to be increased
-    /// @param _amount The amount of portalEnergyToken to burn
-    function _burnPortalEnergyToken(address _user, uint256 _amount) private {
-        /// @dev Check that the caller has sufficient tokens to burn
-        if (portalEnergyToken.balanceOf(address(_user)) < _amount) {
-            revert InsufficientPEtokens();
-        }
-
-        /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
-        accounts[_user].portalEnergy += _amount;
-
-        /// @dev Burn portalEnergyToken from the caller's wallet
-        portalEnergyToken.burnFrom(_user, _amount);
-    }
-
     /// @notice Update the maximum lock duration up to the terminal value
+    /// @dev Update the maximum lock duration up to the terminal value
     function updateMaxLockDuration() external {
         /// @dev Require that the lock duration can be updated
         if (lockDurationUpdateable == false) {
@@ -1165,7 +1321,7 @@ contract PortalV2 is ReentrancyGuard {
 
         /// @dev Require that the new value will be larger than the existing value
         if (newValue <= maxLockDuration) {
-            revert DurationCannotIncrease();
+            revert DurationBelowCurrent();
         }
 
         if (newValue >= TERMINAL_MAX_LOCK_DURATION) {
@@ -1174,130 +1330,8 @@ contract PortalV2 is ReentrancyGuard {
         } else if (newValue > maxLockDuration) {
             maxLockDuration = newValue;
         }
-    }
 
-    /// @notice Simulate updating a user stake position and return the values without updating the struct
-    /// @dev Returns the simulated up-to-date user stake information
-    /// @param _user The user whose stake position is to be updated
-    /// @param _amount The amount to add to the user's stake position
-    /// @param _isPositiveAmount True for staking, false for unstaking
-    function getUpdateAccount(
-        address _user,
-        uint256 _amount,
-        bool _isPositiveAmount
-    )
-        public
-        view
-        returns (
-            address user,
-            uint256 lastUpdateTime,
-            uint256 lastMaxLockDuration,
-            uint256 stakedBalance,
-            uint256 maxStakeDebt,
-            uint256 portalEnergy,
-            uint256 availableToWithdraw
-        )
-    {
-        /// @dev Load user account into memory
-        Account memory account = accounts[_user];
-
-        /// @dev initialize helper variables
-        uint256 portalEnergyEarned;
-        uint256 portalEnergyIncrease;
-        uint256 portalEnergyNetChange;
-        uint256 portalEnergyAdjustment;
-
-        /// @dev Check the user´s account status based on lastUpdateTime
-        /// @dev If this variable is 0, the user never staked and could not earn PE
-        if (account.lastUpdateTime != 0) {
-            /// @dev Calculate the Portal Energy earned since the last update
-            portalEnergyEarned = (account.stakedBalance *
-                (block.timestamp - account.lastUpdateTime) *
-                1e18);
-
-            /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
-            portalEnergyIncrease = (account.stakedBalance *
-                (maxLockDuration - account.lastMaxLockDuration) *
-                1e18);
-
-            /// @dev Summarize Portal Energy changes and divide by common denominator
-            portalEnergyNetChange =
-                (portalEnergyEarned + portalEnergyIncrease) /
-                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-        }
-
-        /// @dev Calculate the adjustment of Portal Energy from balance change
-        portalEnergyAdjustment =
-            ((_amount * maxLockDuration) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Check that user has enough Portal Energy in case of unstaking
-        if (
-            !_isPositiveAmount && portalEnergyAdjustment > account.portalEnergy
-        ) {
-            revert InsufficientToWithdraw();
-        }
-
-        /// @dev Check that the Stake Balance is sufficient for unstaking
-        if (!_isPositiveAmount && _amount > account.stakedBalance) {
-            revert InsufficientStake();
-        }
-
-        /// @dev Set the last update time to the current timestamp
-        lastUpdateTime = block.timestamp;
-
-        /// @dev Get the updated last maxLockDuration
-        lastMaxLockDuration = maxLockDuration;
-
-        /// @dev Calculate the user's staked balance and consider stake or unstake
-        stakedBalance = _isPositiveAmount
-            ? account.stakedBalance + _amount
-            : account.stakedBalance - _amount;
-
-        /// @dev Update the user's max stake debt
-        maxStakeDebt =
-            (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Update the user's portalEnergy and account for stake or unstake
-        portalEnergy = _isPositiveAmount
-            ? account.portalEnergy +
-                portalEnergyNetChange +
-                portalEnergyAdjustment
-            : account.portalEnergy +
-                portalEnergyNetChange -
-                portalEnergyAdjustment;
-
-        /// @dev Update of amount available
-        availableToWithdraw = portalEnergy >= maxStakeDebt
-            ? stakedBalance
-            : (stakedBalance * portalEnergy) / maxStakeDebt;
-
-        /// @dev Set the user for the return values
-        user = _user;
-    }
-
-    /// @notice Simulate forced unstake and return the number of portal energy tokens to be burned
-    /// @param _user The user whose stake position is to be updated for the simulation
-    /// @return portalEnergyTokenToBurn Returns the number of portal energy tokens to be burned for a full unstake
-    function quoteforceUnstakeAll(
-        address _user
-    ) external view returns (uint256 portalEnergyTokenToBurn) {
-        /// @dev Get the relevant data from the simulated account update
-        (
-            ,
-            ,
-            ,
-            ,
-            uint256 maxStakeDebt,
-            uint256 portalEnergy,
-
-        ) = getUpdateAccount(_user, 0, false);
-
-        /// @dev Calculate how many Portal Energy Tokens must be burned for a full unstake
-        portalEnergyTokenToBurn = maxStakeDebt > portalEnergy
-            ? maxStakeDebt - portalEnergy
-            : 0;
+        emit MaxLockDurationUpdated(maxLockDuration);
     }
 
     receive() external payable {}
