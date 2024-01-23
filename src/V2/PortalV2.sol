@@ -4,11 +4,11 @@ pragma solidity =0.8.19;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol"; //audit: use V4.9.0
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {MintBurnToken} from "./MintBurnToken.sol";
-import {IStaking} from "./interfaces/IStaking.sol";
-import {ICompounder} from "./interfaces/ICompounder.sol";
-import {IRewarder} from "./interfaces/IRewarder.sol";
+import {IWater} from "./interfaces/IWater.sol";
+import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
+import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
 // ============================================
 // ==          CUSTOM ERROR MESSAGES         ==
@@ -112,27 +112,27 @@ contract PortalV2 is ReentrancyGuard {
     address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
 
-    address payable private constant COMPOUNDER_ADDRESS =
-        payable(0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
-    address payable private constant HLP_STAKING =
-        payable(0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
-    address private constant HLP_PROTOCOL_REWARDER =
-        0x665099B3e59367f02E5f9e039C3450E31c338788;
-    address private constant HLP_EMISSIONS_REWARDER =
-        0x6D2c18B559C5343CB0703bB55AADB5f22152cC32;
+    // address payable private constant COMPOUNDER_ADDRESS =
+    //     payable(0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
+    // address payable private constant HLP_STAKING =
+    //     payable(0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
+    // address private constant HLP_PROTOCOL_REWARDER =
+    //     0x665099B3e59367f02E5f9e039C3450E31c338788;
+    // address private constant HLP_EMISSIONS_REWARDER =
+    //     0x6D2c18B559C5343CB0703bB55AADB5f22152cC32;
 
-    address private constant HMX_STAKING =
-        0x92E586B8D4Bf59f4001604209A292621c716539a;
-    address private constant HMX_PROTOCOL_REWARDER =
-        0xB698829C4C187C85859AD2085B24f308fC1195D3;
-    address private constant HMX_EMISSIONS_REWARDER =
-        0x94c22459b145F012F1c6791F2D729F7a22c44764;
-    address private constant HMX_DRAGONPOINTS_REWARDER =
-        0xbEDd351c62111FB7216683C2A26319743a06F273;
+    // address private constant HMX_STAKING =
+    //     0x92E586B8D4Bf59f4001604209A292621c716539a;
+    // address private constant HMX_PROTOCOL_REWARDER =
+    //     0xB698829C4C187C85859AD2085B24f308fC1195D3;
+    // address private constant HMX_EMISSIONS_REWARDER =
+    //     0x94c22459b145F012F1c6791F2D729F7a22c44764;
+    // address private constant HMX_DRAGONPOINTS_REWARDER =
+    //     0xbEDd351c62111FB7216683C2A26319743a06F273;
 
-    uint256 private constant HMX_TIMESTAMP = 1689206400;
-    uint256 private constant HMX_NUMBER =
-        115792089237316195423570985008687907853269984665640564039457584007913129639935;
+    // uint256 private constant HMX_TIMESTAMP = 1689206400;
+    // uint256 private constant HMX_NUMBER =
+    //     115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
     // bootstrapping related
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds that the funding phase lasts before Portal can be activated
@@ -978,7 +978,7 @@ contract PortalV2 is ReentrancyGuard {
     {
         /// @dev Calculate the burn value of 1 full bToken in PSM
         /// @dev Add 1 to handle potential rounding issue in the next step
-        burnValueFullToken = getBurnValuePSM(1e18) + 1;
+        uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
 
         /// @dev Calculate and return the amount of bTokens burnable
         amountBurnable = (fundingRewardPool * 1e18) / burnValueFullToken;
@@ -1206,7 +1206,7 @@ contract PortalV2 is ReentrancyGuard {
     ) external {
         /// @dev Check for zero value inputs
         if (_amount == 0) {
-            revert InvalidIAmount();
+            revert InvalidAmount();
         }
         if (_recipient == address(0)) {
             revert InvalidAddress();
