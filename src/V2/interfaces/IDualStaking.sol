@@ -7,4 +7,6 @@ interface IDualStaking {
 
     /// @notice function to claim protocol fee and re stake the esVKA rewards
     function compound() external;
+
+    function pendingRewardsUSDC(address account) external view returns (uint);
 }

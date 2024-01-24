@@ -8,8 +8,18 @@ import {IWater} from "./interfaces/IWater.sol";
 import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
+error InsufficientStakeBalance();
+
 contract IntegrationTest is Ownable {
-    constructor() {}
+    constructor() {
+        sharesAddresses[USDCE_ADDRESS] = USDCE_WATER;
+        sharesAddresses[USDC_ADDRESS] = USDC_WATER;
+        sharesAddresses[ARB_ADDRESS] = ARB_WATER;
+        sharesAddresses[WBTC_ADDRESS] = WBTC_WATER;
+        sharesAddresses[WETH_ADDRESS] = WETH_WATER;
+        sharesAddresses[address(0)] = WETH_WATER;
+        sharesAddresses[LINK_ADDRESS] = LINK_WATER;
+    }
 
     // ==============================================
     // PARAMETERS
@@ -49,16 +59,15 @@ contract IntegrationTest is Ownable {
     address private constant LINK_WATER =
         0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
 
-    mapping(uint256 pid => uint256 staked) stakeBalance;
+    mapping(address asset => address vaultShare) public sharesAddresses;
 
     // ==============================================
     // Staking & Unstaking
     // ==============================================
 
-    // Helper function to get the PID of a staking token
-    function getPidOfVaultShare(
-        address _token
-    ) public view returns (uint256 pid) {
+    // Helper function to get the PID of a vault share token (WATER)
+    function getPidOfAsset(address _asset) public view returns (uint256 pid) {
+        address vaultShare = sharesAddresses[_asset];
         uint256 length = ISingleStaking(SINGLE_STAKING).poolLength();
 
         for (uint256 i = 0; i < length; ++i) {
@@ -67,62 +76,81 @@ contract IntegrationTest is Ownable {
                 .getPoolTokenAddress(i);
 
             // save and return the pid of the input token
-            if (tokenCheck == _token) {
+            if (tokenCheck == vaultShare) {
                 pid = i;
             }
         }
     }
 
-    // Deposit
+    // Deposit -- MUST ALLOW NATIVE ETH STAKING
     function deposit(address _token, uint256 _amount) public onlyOwner {
         // transfer token from user to contract
         IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
 
-        // TO DO change the IWater interface dynamically according to input token
-        IERC20(_token).safeIncreaseAllowance(USDCE_WATER, _amount);
-        uint256 depositShares = IWater(USDCE_WATER).deposit(
+        // Change the IWater interface dynamically according to input token
+        address shareAddress = sharesAddresses[_token];
+
+        // Allow spending token and deposit into Vault to receive Shares (WATER)
+        IERC20(_token).safeIncreaseAllowance(shareAddress, _amount);
+        uint256 depositShares = IWater(shareAddress).deposit(
             _amount,
             address(this)
         );
 
-        uint256 pid = getPidOfVaultShare(USDCE_WATER);
-
-        IERC20(USDCE_WATER).safeIncreaseAllowance(
+        // Allow spending of shares by the staking contract
+        IERC20(shareAddress).safeIncreaseAllowance(
             SINGLE_STAKING,
             depositShares
         );
+
+        // Stake the Vault Shares into the staking contract using the pool identifier (pid)
+        uint256 pid = getPidOfAsset(_token);
         ISingleStaking(SINGLE_STAKING).deposit(pid, depositShares);
 
-        stakeBalance[pid] += depositShares;
+        // increase tracker of user and global stakes
     }
 
-    // Withdrawal
+    // Withdrawal of asset token --> must allow for withdrawing native ETH
     function withdraw(address _token, uint256 _amount) public onlyOwner {
-        // Require that the amount of withdrawn assets is less or equal to user´s staked assets
-        // IWater(USDCE_WATER).convertToShares(_amount);
+        // Change the IWater interface dynamically according to input token
+        address shareAddress = sharesAddresses[_token];
+        uint256 withdrawShares = IWater(shareAddress).convertToShares(_amount);
 
-        // TO DO change the interface input dynamically
-        // AT THIS POINT THE USDCE_WATER IS NOT IN CONTRACT
-        uint256 withdrawShares = IWater(USDCE_WATER).withdraw(
-            _amount,
-            msg.sender,
-            address(this)
-        );
+        uint256 pid = getPidOfAsset(_token);
 
-        // NOTICE: At this point, the contract will pay out less shares over time, perma-locking the other shares.
-        // The contract must know how many shares it can withdraw as profit so that it can be arbitraged
+        // Check if user has enough shares/assets to withdraw
 
-        uint256 pid = getPidOfVaultShare(_token);
+        // Reduce tracker of user and global stakes
 
+        // ISSUE: At this point, the contract will pay out less shares over time, perma-locking the remainders
+        // The contract must know how many shares are principal and how many are profit
+        // Track user´s debt in asset and total asset debt of all users
+        // convert total debt of all users into shares on each call -> this is principal
+        // rest of shares are profit
+        // profit can be redeemed and arbitraged -> This changes the convert() function
         ISingleStaking(SINGLE_STAKING).withdraw(pid, withdrawShares);
 
-        stakeBalance[pid] -= withdrawShares;
+        // Withdraw the staked assets and adjust for rounding errors from Vault
+        uint256 balanceBefore = IERC20(_token).balanceOf(address(this));
+        IWater(shareAddress).withdraw(_amount, address(this), address(this));
+        uint256 balanceAfter = IERC20(_token).balanceOf(address(this));
+
+        _amount = balanceAfter - balanceBefore;
+
+        // Transfer the obtained assets to the user
+        IERC20(_token).safeTransfer(msg.sender, _amount);
     }
 
     // ==============================================
-    // Claiming Rewards
+    // Claiming Rewards from esVKA Staking
     // ==============================================
 
+    // Read current USDC.E rewards pending
+    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
+        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
+    }
+
+    // WORKS
     function claimAll() public onlyOwner {
         ISingleStaking(SINGLE_STAKING).claimAll();
 
@@ -136,12 +164,15 @@ contract IntegrationTest is Ownable {
         IDualStaking(DUAL_STAKING).compound();
     }
 
-    function claimRewardsForStakePid(uint256 _pid) external onlyOwner {
-        ISingleStaking(SINGLE_STAKING).deposit(_pid, 0);
+    // WORKS
+    function claimRewardsForAsset(address _asset) external onlyOwner {
+        uint256 pid = getPidOfAsset(_asset);
+        ISingleStaking(SINGLE_STAKING).deposit(pid, 0);
 
         uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
 
         if (esVKABalance > 0) {
+            IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, esVKABalance);
             IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
         }
 
