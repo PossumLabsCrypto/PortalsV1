@@ -9,16 +9,34 @@ import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
 error InsufficientStakeBalance();
+error IncorrectAmountNativeETH();
+error FailedToSendNativeToken();
 
 contract IntegrationTest is Ownable {
     constructor() {
-        sharesAddresses[USDCE_ADDRESS] = USDCE_WATER;
-        sharesAddresses[USDC_ADDRESS] = USDC_WATER;
-        sharesAddresses[ARB_ADDRESS] = ARB_WATER;
-        sharesAddresses[WBTC_ADDRESS] = WBTC_WATER;
-        sharesAddresses[WETH_ADDRESS] = WETH_WATER;
-        sharesAddresses[address(0)] = WETH_WATER;
-        sharesAddresses[LINK_ADDRESS] = LINK_WATER;
+        vaultAddresses[USDCE_ADDRESS] = USDCE_WATER;
+        vaultAddresses[USDC_ADDRESS] = USDC_WATER;
+        vaultAddresses[WETH_ADDRESS] = WETH_WATER;
+        vaultAddresses[address(0)] = WETH_WATER;
+        vaultAddresses[ARB_ADDRESS] = ARB_WATER;
+        vaultAddresses[WBTC_ADDRESS] = WBTC_WATER;
+        vaultAddresses[LINK_ADDRESS] = LINK_WATER;
+
+        poolIDs[USDCE_ADDRESS] = 4;
+        poolIDs[USDC_ADDRESS] = 5;
+        poolIDs[WETH_ADDRESS] = 10;
+        poolIDs[address(0)] = 10;
+        poolIDs[ARB_ADDRESS] = 11;
+        poolIDs[WBTC_ADDRESS] = 12;
+        poolIDs[LINK_ADDRESS] = 16;
+
+        // // increase allowances of Vault Shares to Single Staking
+        // increaseAllowanceSingleStaking(USDCE_ADDRESS);
+        // increaseAllowanceSingleStaking(USDC_ADDRESS);
+        // increaseAllowanceSingleStaking(WETH_ADDRESS);
+        // increaseAllowanceSingleStaking(ARB_ADDRESS);
+        // increaseAllowanceSingleStaking(WBTC_ADDRESS);
+        // increaseAllowanceSingleStaking(LINK_ADDRESS);
     }
 
     // ==============================================
@@ -27,17 +45,18 @@ contract IntegrationTest is Ownable {
     using SafeERC20 for IERC20;
 
     address private constant USDCE_ADDRESS =
-        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8;
+        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8; // pid 4
     address private constant USDC_ADDRESS =
-        0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
-    address private constant ARB_ADDRESS =
-        0x912CE59144191C1204E64559FE8253a0e49E6548;
-    address private constant WBTC_ADDRESS =
-        0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f;
+        0xaf88d065e77c8cC2239327C5EDb3A432268e5831; // pid 5
     address private constant WETH_ADDRESS =
-        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // pid 10
+    address private constant ARB_ADDRESS =
+        0x912CE59144191C1204E64559FE8253a0e49E6548; // pid 11
+    address private constant WBTC_ADDRESS =
+        0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f; // pid 12
+
     address private constant LINK_ADDRESS =
-        0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
+        0xf97f4df75117a78c1A5a0DBb814Af92458539FB4; // pid 16
 
     address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
@@ -59,68 +78,84 @@ contract IntegrationTest is Ownable {
     address private constant LINK_WATER =
         0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
 
-    mapping(address asset => address vaultShare) public sharesAddresses;
+    mapping(address asset => address vaultAddress) public vaultAddresses;
+    mapping(address asset => uint256 pid) public poolIDs;
+    mapping(address asset => uint256 shares) public vaultSharesStaked;
+
+    uint256 private constant MAX_UINT =
+        115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
     // ==============================================
     // Staking & Unstaking
     // ==============================================
-
-    // Helper function to get the PID of a vault share token (WATER)
-    function getPidOfAsset(address _asset) public view returns (uint256 pid) {
-        address vaultShare = sharesAddresses[_asset];
-        uint256 length = ISingleStaking(SINGLE_STAKING).poolLength();
-
-        for (uint256 i = 0; i < length; ++i) {
-            // Get the token address of the current pid
-            address tokenCheck = ISingleStaking(SINGLE_STAKING)
-                .getPoolTokenAddress(i);
-
-            // save and return the pid of the input token
-            if (tokenCheck == vaultShare) {
-                pid = i;
-            }
-        }
-    }
-
-    // Deposit -- MUST ALLOW NATIVE ETH STAKING
-    function deposit(address _token, uint256 _amount) public onlyOwner {
-        // transfer token from user to contract
-        IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
-
+    // Deposit
+    function deposit(address _token, uint256 _amount) public payable onlyOwner {
         // Change the IWater interface dynamically according to input token
-        address shareAddress = sharesAddresses[_token];
+        address vaultAddress = vaultAddresses[_token];
+        uint256 depositShares;
 
-        // Allow spending token and deposit into Vault to receive Shares (WATER)
-        IERC20(_token).safeIncreaseAllowance(shareAddress, _amount);
-        uint256 depositShares = IWater(shareAddress).deposit(
-            _amount,
-            address(this)
-        );
+        // Check if handling native ETH
+        if (_token == address(0)) {
+            // Deposit ETH into Vault to receive Shares (WATER)
+            depositShares = IWater(vaultAddress).depositETH{value: msg.value}();
+        }
 
-        // Allow spending of shares by the staking contract
-        IERC20(shareAddress).safeIncreaseAllowance(
-            SINGLE_STAKING,
-            depositShares
-        );
+        // Check if handling an ERC20 token
+        if (_token != address(0)) {
+            // transfer token from user to contract
+            IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
+
+            // Allow spending token and deposit into Vault to receive Shares (WATER)
+            IERC20(_token).safeIncreaseAllowance(vaultAddress, _amount);
+            depositShares = IWater(vaultAddress).deposit(
+                _amount,
+                address(this)
+            );
+        }
 
         // Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        uint256 pid = getPidOfAsset(_token);
+        // Approval of amount has already been given with different function
+        uint256 pid = poolIDs[_token];
         ISingleStaking(SINGLE_STAKING).deposit(pid, depositShares);
 
         // increase tracker of user and global stakes
+        vaultSharesStaked[_token] += depositShares;
     }
 
-    // Withdrawal of asset token --> must allow for withdrawing native ETH
+    // Withdrawal of vault share from single staking
+    function withdrawSingleStaking(address _token) public onlyOwner {
+        // Change the IWater interface dynamically according to input token
+        uint256 withdrawShares = vaultSharesStaked[_token];
+
+        // Withdraw Vault Shares from Single Staking Contract
+        uint256 pid = poolIDs[_token];
+        ISingleStaking(SINGLE_STAKING).withdraw(pid, withdrawShares);
+    }
+
+    function insightTest(
+        address _token,
+        uint256 _amount
+    ) public view returns (address vaultAddress, uint256 withdrawShares) {
+        // Change the IWater interface dynamically according to input token
+        vaultAddress = vaultAddresses[_token];
+        withdrawShares = IWater(vaultAddress).convertToShares(_amount);
+    }
+
+    // ============================ BROKEN ========================
+    // Withdrawal of asset token
     function withdraw(address _token, uint256 _amount) public onlyOwner {
         // Change the IWater interface dynamically according to input token
-        address shareAddress = sharesAddresses[_token];
-        uint256 withdrawShares = IWater(shareAddress).convertToShares(_amount);
+        address vaultAddress = vaultAddresses[_token];
+        uint256 withdrawShares = IWater(vaultAddress).convertToShares(_amount);
 
-        uint256 pid = getPidOfAsset(_token);
+        // Withdraw Vault Shares from Single Staking Contract
+        uint256 pid = poolIDs[_token];
+        ISingleStaking(SINGLE_STAKING).withdraw(pid, withdrawShares);
 
-        // Check if user has enough shares/assets to withdraw
-
-        // Reduce tracker of user and global stakes
+        // Get the withdrawable assets from burning shares (rounding issue)
+        uint256 withdrawAssets = IWater(vaultAddress).convertToAssets(
+            withdrawShares
+        );
 
         // ISSUE: At this point, the contract will pay out less shares over time, perma-locking the remainders
         // The contract must know how many shares are principal and how many are profit
@@ -128,17 +163,41 @@ contract IntegrationTest is Ownable {
         // convert total debt of all users into shares on each call -> this is principal
         // rest of shares are profit
         // profit can be redeemed and arbitraged -> This changes the convert() function
-        ISingleStaking(SINGLE_STAKING).withdraw(pid, withdrawShares);
 
-        // Withdraw the staked assets and adjust for rounding errors from Vault
-        uint256 balanceBefore = IERC20(_token).balanceOf(address(this));
-        IWater(shareAddress).withdraw(_amount, address(this), address(this));
-        uint256 balanceAfter = IERC20(_token).balanceOf(address(this));
+        uint256 balanceBefore;
+        uint256 balanceAfter;
 
-        _amount = balanceAfter - balanceBefore;
+        // Check if handling native ETH
+        if (_token == address(0)) {
+            // Withdraw the staked ETH and adjust for rounding errors from Vault
+            balanceBefore = address(this).balance;
+            IWater(vaultAddress).withdrawETH(withdrawAssets);
+            balanceAfter = address(this).balance;
 
-        // Transfer the obtained assets to the user
-        IERC20(_token).safeTransfer(msg.sender, _amount);
+            _amount = balanceAfter - balanceBefore;
+
+            (bool sent, ) = payable(msg.sender).call{value: _amount}("");
+            if (!sent) {
+                revert FailedToSendNativeToken();
+            }
+        }
+
+        // Check if handling ERC20 tokens
+        if (_token != address(0)) {
+            // Withdraw the staked assets and adjust for rounding errors from Vault
+            balanceBefore = IERC20(_token).balanceOf(address(this));
+            IWater(vaultAddress).withdraw(
+                withdrawAssets,
+                address(this),
+                address(this)
+            );
+            balanceAfter = IERC20(_token).balanceOf(address(this));
+
+            _amount = balanceAfter - balanceBefore;
+
+            // Transfer the obtained assets to the user
+            IERC20(_token).safeTransfer(msg.sender, _amount);
+        }
     }
 
     // ==============================================
@@ -166,7 +225,7 @@ contract IntegrationTest is Ownable {
 
     // WORKS
     function claimRewardsForAsset(address _asset) external onlyOwner {
-        uint256 pid = getPidOfAsset(_asset);
+        uint256 pid = poolIDs[_asset];
         ISingleStaking(SINGLE_STAKING).deposit(pid, 0);
 
         uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
@@ -178,6 +237,39 @@ contract IntegrationTest is Ownable {
 
         IDualStaking(DUAL_STAKING).compound();
     }
+
+    // ==============================================
+    // HELPER FUNCTIONS
+    // ==============================================
+    // Increase the token spending allowance of Vault Shares by the Single Staking contract
+    function increaseAllowanceSingleStaking(address _asset) public {
+        // Allow spending of Vault shares of an asset by the staking contract
+        IERC20(vaultAddresses[_asset]).safeIncreaseAllowance(
+            SINGLE_STAKING,
+            MAX_UINT
+        );
+    }
+
+    // Get the PID of a vault share token (WATER)
+    function getPidOfAsset(address _asset) public view returns (uint256 pid) {
+        address vaultShare = vaultAddresses[_asset];
+        uint256 length = ISingleStaking(SINGLE_STAKING).poolLength();
+
+        for (uint256 i = 0; i < length; ++i) {
+            // Get the token address of the current pid
+            address tokenCheck = ISingleStaking(SINGLE_STAKING)
+                .getPoolTokenAddress(i);
+
+            // save and return the pid of the input token
+            if (tokenCheck == vaultShare) {
+                pid = i;
+            }
+        }
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {}
 
     // ==============================================
     // EMERGENCY

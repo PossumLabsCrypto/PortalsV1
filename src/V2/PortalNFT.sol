@@ -6,11 +6,14 @@ import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/
 error NotOwner();
 error NotOwnerOfNFT();
 
-contract PortalPosition is ERC721URIStorage {
+// must be deployed by the Portal itself
+contract PortalNFT is ERC721URIStorage {
     constructor(
         uint256 _decimalsAdjustment,
+        string memory _name,
+        string memory _symbol,
         string memory _metadataURI
-    ) ERC721("MyNFTCollection", "MNC") {
+    ) ERC721(_name, _symbol) {
         OWNER = msg.sender;
         DECIMALS_ADJUSTMENT = _decimalsAdjustment;
         metadataURI = _metadataURI;
@@ -35,6 +38,23 @@ contract PortalPosition is ERC721URIStorage {
     string private metadataURI; // Metadata URI for all NFTs
 
     // ========================
+    //     Events
+    // ========================
+    event PortalNFTminted(
+        address indexed sender,
+        address indexed recipient,
+        uint256 stakedBalance,
+        uint256 portalEnergy
+    );
+
+    event PortalNFTredeemed(
+        address indexed sender,
+        address indexed recipient,
+        uint256 stakedBalance,
+        uint256 portalEnergy
+    );
+
+    // ========================
     //    Modifiers
     // ========================
     // Ownership modifier
@@ -48,12 +68,12 @@ contract PortalPosition is ERC721URIStorage {
     // ========================
     //    Functions
     // ========================
-    // Minter function
+    // Mint function, can only be called by owner (Portal)
     function mint(
         address _recipient,
         uint256 _stakedBalance,
         uint256 _portalEnergy
-    ) external onlyOwner {
+    ) external onlyOwner returns (uint256 nftID) {
         totalSupply++;
         _safeMint(_recipient, totalSupply);
         _setTokenURI(totalSupply, metadataURI);
@@ -64,13 +84,17 @@ contract PortalPosition is ERC721URIStorage {
         account.portalEnergy = _portalEnergy;
 
         accounts[totalSupply] = account;
+
+        nftID = totalSupply;
     }
 
-    // Burn function
-    function burn(
-        uint256 _tokenId
+    // Redeem NFT for internal Account in Portal
+    // Can only be called by the owner (Portal)
+    function redeem(
+        uint256 _tokenId,
+        address ownerOfNFT
     ) external onlyOwner returns (uint256 stakedBalance, uint256 portalEnergy) {
-        if (msg.sender != _ownerOf(_tokenId)) {
+        if (ownerOfNFT != _ownerOf(_tokenId)) {
             revert NotOwnerOfNFT();
         }
 

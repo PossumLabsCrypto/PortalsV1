@@ -15,7 +15,9 @@ interface IWater {
         address _owner
     ) external returns (uint256);
 
+    function withdrawETH(uint256 _assets) external returns (uint256);
+
     function convertToShares(uint256 assets) external view returns (uint256);
 
-    function convertToAssets(uint256 assets) external view returns (uint256);
+    function convertToAssets(uint256 shares) external view returns (uint256);
 }
