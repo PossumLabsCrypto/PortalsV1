@@ -14,9 +14,11 @@ import {IDualStaking} from "./interfaces/IDualStaking.sol";
 // ============================================
 // ==          CUSTOM ERROR MESSAGES         ==
 // ============================================
+error bTokenNotDeployed();
 error DeadlineExpired();
 error DurationLocked();
 error DurationBelowCurrent();
+error EmptyAccount();
 error FailedToSendNativeToken();
 error FundingPhaseOngoing();
 error FundingInsufficient();
@@ -28,7 +30,8 @@ error InsufficientToWithdraw();
 error InvalidAddress();
 error InvalidAmount();
 error InvalidConstructor();
-error EmptyAccount();
+error PEtokenNotDeployed();
+error PortalNFTnotDeployed();
 error PortalNotActive();
 error PortalAlreadyActive();
 error TokenExists();
@@ -103,8 +106,9 @@ contract PortalV2 is ReentrancyGuard {
     MintBurnToken public bToken; // the receipt token for funding the Portal
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
-    bool public bTokenCreated; // flag for bToken creation
-    bool public portalEnergyTokenCreated; // flag for PE token creation
+    bool public bTokenCreated; // flag for bToken deployment
+    bool public portalEnergyTokenCreated; // flag for PE token deployment
+    bool public PortalNFTcreated; // flag for Portal NFT contract deployment
 
     address public constant PSM_ADDRESS =
         0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
@@ -491,16 +495,52 @@ contract PortalV2 is ReentrancyGuard {
     // ============================================
     // ==         NFT Position Management        ==
     // ============================================
+    /// @notice This function deploys the NFT contract unique to this Portal
+    /// @dev Deploy an NFT contract with name and symbol related to the principal token
+    /// @dev Must be called before Portal is activated
+    /// @dev Can only be called once
+    function create_portalNFT() public nonActivePortalCheck {
+        // Check if the NFT contract is already deployed
+        if (PortalNFTcreated) {
+            revert TokenExists();
+        }
+
+        /// @dev Update the token creation flag to prevent future calls
+        PortalNFTcreated = true;
+
+        /// @dev Build the NFT contract with name and symbol based on the principal token of this Portal
+        string memory name = concatenate(
+            "Portal-Position-",
+            ERC20(PRINCIPAL_TOKEN_ADDRESS).name()
+        );
+
+        string memory symbol = concatenate(
+            "P-",
+            ERC20(PRINCIPAL_TOKEN_ADDRESS).symbol()
+        );
+
+        /// @dev Deploy the token and update the related storage variable so that other functions can work
+        portalNFT = new PortalNFT(
+            DECIMALS_ADJUSTMENT,
+            name,
+            symbol,
+            NFT_META_DATA
+        );
+
+        /// @dev Emit event that the NFT contract was deployed
+        emit PortalNFTdeployed(address(portalNFT));
+    }
+
     /// @notice This function allows users to store their Account in a transferrable NFT
     /// @dev Mint a Portal NFT with the vital information of caller account to a recipient
     /// @dev Delete the caller account
-    function mintNFTposition(address _recipient) public {
+    function mintNFTposition(address _recipient) public activePortalCheck {
         /// @dev Check that the recipient is a valid address
         if (_recipient == address(0)) {
             revert InvalidAddress();
         }
 
-        /// @dev Get the current status of the user´s stake
+        /// @dev Get the current status of user stake
         (
             ,
             ,
@@ -916,6 +956,17 @@ contract PortalV2 is ReentrancyGuard {
             revert FundingInsufficient();
         }
 
+        /// @dev Check that the necessary child contracts have been deployed
+        if (!bTokenCreated) {
+            revert bTokenNotDeployed();
+        }
+        if (!portalEnergyTokenCreated) {
+            revert PEtokenNotDeployed();
+        }
+        if (!PortalNFTcreated) {
+            revert PortalNFTnotDeployed();
+        }
+
         /// @dev Activate the portal
         isActivePortal = true;
 
@@ -1073,9 +1124,10 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @notice Deploy the bToken of this Portal
-    /// @dev This function deploys the bToken of this Portal and sets the Portal as owner
+    /// @dev Must be called before Portal is activated
+    /// @dev Must be called before Portal is activated
     /// @dev Can only be called once
-    function create_bToken() external {
+    function create_bToken() external nonActivePortalCheck {
         if (bTokenCreated) {
             revert TokenExists();
         }
@@ -1102,8 +1154,9 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @notice Deploy the Portal Energy Token of this Portal
     /// @dev This function deploys the PortalEnergyToken of this Portal and sets the Portal as owner
+    /// @dev Must be called before Portal is activated
     /// @dev Can only be called once
-    function create_portalEnergyToken() external {
+    function create_portalEnergyToken() external nonActivePortalCheck {
         if (portalEnergyTokenCreated) {
             revert TokenExists();
         }

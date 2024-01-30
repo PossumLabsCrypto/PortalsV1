@@ -35,24 +35,7 @@ contract PortalNFT is ERC721URIStorage {
     uint256 public totalSupply;
     uint256 private constant SECONDS_PER_YEAR = 31536000;
     uint256 private immutable DECIMALS_ADJUSTMENT;
-    string private metadataURI; // Metadata URI for all NFTs
-
-    // ========================
-    //     Events
-    // ========================
-    event PortalNFTminted(
-        address indexed sender,
-        address indexed recipient,
-        uint256 stakedBalance,
-        uint256 portalEnergy
-    );
-
-    event PortalNFTredeemed(
-        address indexed sender,
-        address indexed recipient,
-        uint256 stakedBalance,
-        uint256 portalEnergy
-    );
+    string private metadataURI; // Metadata URI for all NFTs of this Portal
 
     // ========================
     //    Modifiers
