@@ -7,8 +7,6 @@ interface IWater {
         address _receiver
     ) external returns (uint256);
 
-    function depositETH() external payable returns (uint256);
-
     function withdraw(
         uint256 _assets,
         address _receiver,
@@ -20,4 +18,6 @@ interface IWater {
     function convertToShares(uint256 assets) external view returns (uint256);
 
     function convertToAssets(uint256 shares) external view returns (uint256);
+
+    function lockTime() external view returns (uint256);
 }

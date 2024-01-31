@@ -22,72 +22,33 @@ error NotOwner();
 contract IntegrationTest {
     constructor() {
         OWNER = msg.sender;
-
-        vaultAddresses[USDCE_ADDRESS] = USDCE_WATER;
-        vaultAddresses[USDC_ADDRESS] = USDC_WATER;
-        vaultAddresses[WETH_ADDRESS] = WETH_WATER;
-        vaultAddresses[address(0)] = WETH_WATER;
-        vaultAddresses[ARB_ADDRESS] = ARB_WATER;
-        vaultAddresses[WBTC_ADDRESS] = WBTC_WATER;
-        vaultAddresses[LINK_ADDRESS] = LINK_WATER;
-
-        poolIDs[USDCE_ADDRESS] = 4;
-        poolIDs[USDC_ADDRESS] = 5;
-        poolIDs[WETH_ADDRESS] = 10;
-        poolIDs[address(0)] = 10;
-        poolIDs[ARB_ADDRESS] = 11;
-        poolIDs[WBTC_ADDRESS] = 12;
-        poolIDs[LINK_ADDRESS] = 16;
     }
 
     // ==============================================
     // PARAMETERS
     // ==============================================
     using SafeERC20 for IERC20;
-
+    uint256 private constant MAX_UINT =
+        115792089237316195423570985008687907853269984665640564039457584007913129639935;
     address public immutable OWNER;
-    uint256 public acceptedTimeLock;
+    uint256 public acceptedTimeLock = 1000; // THIS MUST BE SET TO 0 IN REAL USE
+    address private constant WETH_ADDRESS =
+        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // in case native ETH is handled
 
     address private constant USDCE_ADDRESS =
-        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8; // pid 4
-    address private constant USDC_ADDRESS =
-        0xaf88d065e77c8cC2239327C5EDb3A432268e5831; // pid 5
-    address private constant WETH_ADDRESS =
-        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // pid 10
-    address private constant ARB_ADDRESS =
-        0x912CE59144191C1204E64559FE8253a0e49E6548; // pid 11
-    address private constant WBTC_ADDRESS =
-        0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f; // pid 12
-
-    address private constant LINK_ADDRESS =
-        0xf97f4df75117a78c1A5a0DBb814Af92458539FB4; // pid 16
-
-    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
+        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8;
+    address private constant USDCE_WATER =
+        0x806e8538FC05774Ea83d9428F778E423F6492475;
+    uint256 public constant POOL_ID = 4;
 
     address private constant SINGLE_STAKING =
         0x314223E2fA375F972E159002Eb72A96301E99e22;
     address private constant DUAL_STAKING =
         0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
 
-    address private constant USDCE_WATER =
-        0x806e8538FC05774Ea83d9428F778E423F6492475;
-    address private constant USDC_WATER =
-        0x9045ae36f963b7184861BDce205ea8B08913B48c;
-    address private constant ARB_WATER =
-        0x175995159ca4F833794C88f7873B3e7fB12Bb1b6;
-    address private constant WBTC_WATER =
-        0x4e9e41Bbf099fE0ef960017861d181a9aF6DDa07;
-    address private constant WETH_WATER =
-        0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
-    address private constant LINK_WATER =
-        0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
+    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
-    mapping(address asset => address vaultAddress) public vaultAddresses;
-    mapping(address asset => uint256 pid) public poolIDs;
-    mapping(address asset => uint256 stake) public assetsStaked;
-
-    uint256 private constant MAX_UINT =
-        115792089237316195423570985008687907853269984665640564039457584007913129639935;
+    uint256 public assetsStaked;
 
     // ==============================================
     // MODIFIERS
@@ -104,69 +65,54 @@ contract IntegrationTest {
     // ==============================================
     // Deposit
     function deposit(address _token, uint256 _amount) public payable onlyOwner {
-        // Change the IWater interface dynamically according to input token
-        address vaultAddress = vaultAddresses[_token];
-        uint256 pid = poolIDs[_token];
-        uint256 depositShares;
-
         // Check if timeLock is zero to protect from griefing attack
-        if (IWater(vaultAddress).lockTime() > acceptedTimeLock) {
+        if (IWater(USDCE_WATER).lockTime() > acceptedTimeLock) {
             revert TimeLockActive();
         }
 
-        // Check if handling native ETH
+        // Convert native ETH to WETH for contract
         if (_token == address(0)) {
             // Deposit ETH into WETH
             _amount = msg.value;
             IWETH(WETH_ADDRESS).deposit{value: _amount}();
         }
 
-        // Continue with ERC20 token
+        // Transfer ERC20 token to contract
         if (_token != address(0)) {
             // transfer token from user to contract
             IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
         }
 
-        // increase tracker of user and global stakes
-        assetsStaked[_token] += _amount;
+        // increase tracker of staked assets
+        assetsStaked += _amount;
 
         // Allow spending token and deposit into Vault to receive Shares (WATER)
-        // Approval of token spending is handled with separate function
-        depositShares = IWater(vaultAddress).deposit(_amount, address(this));
+        // Approval of token spending is handled with separate function to save gas
+        uint256 depositShares = IWater(USDCE_WATER).deposit(
+            _amount,
+            address(this)
+        );
 
         // Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        // Approval of token spending is handled with separate function
-        ISingleStaking(SINGLE_STAKING).deposit(pid, depositShares);
+        // Approval of token spending is handled with separate function to save gas
+        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, depositShares);
     }
 
-    // ======================== TESTING ===========================
-
-    function getLockTime(
-        address _token
-    ) public view returns (uint256 lockTime) {
-        address vaultAddress = vaultAddresses[_token];
-        lockTime = IWater(vaultAddress).lockTime();
-    }
-
-    // ============================================================
-
-    // Withdrawal of asset token
+    // Withdrawing user assets
     function withdraw(address _token, uint256 _amount) public onlyOwner {
-        // Change the IWater interface dynamically according to input token
-        address vaultAddress = vaultAddresses[_token];
-        uint256 withdrawShares = IWater(vaultAddress).convertToShares(_amount);
+        // Calculate number of Vault Shares that equal the withdraw amount
+        uint256 withdrawShares = IWater(USDCE_WATER).convertToShares(_amount);
 
         // Withdraw Vault Shares from Single Staking Contract
-        uint256 pid = poolIDs[_token];
-        ISingleStaking(SINGLE_STAKING).withdraw(pid, withdrawShares);
+        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, withdrawShares);
 
-        // Get the withdrawable assets from burning shares (rounding issue)
-        uint256 withdrawAssets = IWater(vaultAddress).convertToAssets(
+        // Get the withdrawable assets from burning Vault Shares (avoid rounding issue)
+        uint256 withdrawAssets = IWater(USDCE_WATER).convertToAssets(
             withdrawShares
         );
 
         // Reduce tracker of user and global stakes
-        assetsStaked[_token] -= _amount;
+        assetsStaked -= _amount;
 
         // ISSUE: At this point, the contract will pay out less shares over time, perma-locking the remainders
         // The contract must know how many shares are principal and how many are profit
@@ -175,18 +121,21 @@ contract IntegrationTest {
         // rest of shares are profit
         // profit can be redeemed and arbitraged -> This changes the convert() function
 
+        // helper variables for withdraw amount sanity check
         uint256 balanceBefore;
         uint256 balanceAfter;
 
         // Check if handling native ETH
         if (_token == address(0)) {
-            // Withdraw the staked ETH and adjust for rounding errors from Vault
+            // Withdraw the staked ETH from Vault
             balanceBefore = address(this).balance;
-            IWater(vaultAddress).withdrawETH(withdrawAssets);
+            IWater(USDCE_WATER).withdrawETH(withdrawAssets);
             balanceAfter = address(this).balance;
 
+            // Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
+            // Transfer the obtained ETH to the user
             (bool sent, ) = payable(msg.sender).call{value: _amount}("");
             if (!sent) {
                 revert FailedToSendNativeToken();
@@ -195,15 +144,16 @@ contract IntegrationTest {
 
         // Check if handling ERC20 tokens
         if (_token != address(0)) {
-            // Withdraw the staked assets and adjust for rounding errors from Vault
+            // Withdraw the staked assets from Vault
             balanceBefore = IERC20(_token).balanceOf(address(this));
-            IWater(vaultAddress).withdraw(
+            IWater(USDCE_WATER).withdraw(
                 withdrawAssets,
                 address(this),
                 address(this)
             );
             balanceAfter = IERC20(_token).balanceOf(address(this));
 
+            // Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
             // Transfer the obtained assets to the user
@@ -220,57 +170,51 @@ contract IntegrationTest {
         rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
     }
 
-    // WORKS
-    function claimAll() public onlyOwner {
-        ISingleStaking(SINGLE_STAKING).claimAll();
+    // Claim pending esVKA and USDC rewards
+    function claimRewards() external onlyOwner {
+        // Claim esVKA rewards from staking the asset
+        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, 0);
 
         uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
 
+        // Increase allowance and stake esVKA
         if (esVKABalance > 0) {
-            IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, esVKABalance);
             IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
         }
 
-        IDualStaking(DUAL_STAKING).compound();
-    }
-
-    // WORKS
-    function claimRewardsForAsset(address _asset) external onlyOwner {
-        uint256 pid = poolIDs[_asset];
-        ISingleStaking(SINGLE_STAKING).deposit(pid, 0);
-
-        uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
-
-        if (esVKABalance > 0) {
-            IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, esVKABalance);
-            IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
-        }
-
+        // Claim esVKA and USDC from DualStaking, stake the esVKA reward and send USDC to contract
         IDualStaking(DUAL_STAKING).compound();
     }
 
     // ==============================================
     // HELPER FUNCTIONS
     // ==============================================
+    function getVaultLockTime() public view returns (uint256 lockTime) {
+        lockTime = IWater(USDCE_WATER).lockTime();
+    }
+
     // Increase the token spending allowance of Assets by the associated Vault (WATER)
-    function increaseAllowanceVault(address _asset) public {
+    function increaseAllowanceVault() public {
         // Allow spending of Assets by the associated Vault
-        IERC20(_asset).safeIncreaseAllowance(vaultAddresses[_asset], MAX_UINT);
+        IERC20(USDCE_ADDRESS).safeIncreaseAllowance(USDCE_WATER, MAX_UINT);
     }
 
     // Increase the token spending allowance of Vault Shares by the Single Staking contract
-    function increaseAllowanceSingleStaking(address _asset) public {
+    function increaseAllowanceSingleStaking() public {
         // Allow spending of Vault shares of an asset by the single staking contract
-        IERC20(vaultAddresses[_asset]).safeIncreaseAllowance(
-            SINGLE_STAKING,
-            MAX_UINT
-        );
+        IERC20(USDCE_WATER).safeIncreaseAllowance(SINGLE_STAKING, MAX_UINT);
     }
 
-    function updateBoostMultiplier(address _asset) public {
+    // Increase the token spending allowance of esVKA by the Dual Staking contract
+    function increaseAllowanceDualStaking() public {
+        // Allow spending of esVKA by the Dual Staking contract
+        IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, MAX_UINT);
+    }
+
+    function updateBoostMultiplier() public {
         ISingleStaking(SINGLE_STAKING).updateBoostMultiplier(
             address(this),
-            poolIDs[_asset]
+            POOL_ID
         );
     }
 
