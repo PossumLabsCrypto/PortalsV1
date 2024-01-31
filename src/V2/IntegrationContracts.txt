@@ -1,0 +1,33 @@
+    address private constant USDCE_ADDRESS =
+        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8; // pid 4
+    address private constant USDC_ADDRESS =
+        0xaf88d065e77c8cC2239327C5EDb3A432268e5831; // pid 5
+    address private constant WETH_ADDRESS =
+        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // pid 10
+    address private constant ARB_ADDRESS =
+        0x912CE59144191C1204E64559FE8253a0e49E6548; // pid 11
+    address private constant WBTC_ADDRESS =
+        0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f; // pid 12
+    address private constant LINK_ADDRESS =
+        0xf97f4df75117a78c1A5a0DBb814Af92458539FB4; // pid 16
+
+    address private constant USDCE_WATER =
+        0x806e8538FC05774Ea83d9428F778E423F6492475;
+    address private constant USDC_WATER =
+        0x9045ae36f963b7184861BDce205ea8B08913B48c;
+    address private constant ARB_WATER =
+        0x175995159ca4F833794C88f7873B3e7fB12Bb1b6;
+    address private constant WBTC_WATER =
+        0x4e9e41Bbf099fE0ef960017861d181a9aF6DDa07;
+    address private constant WETH_WATER =
+        0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
+    address private constant LINK_WATER =
+        0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
+
+
+    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
+
+    address private constant SINGLE_STAKING =
+        0x314223E2fA375F972E159002Eb72A96301E99e22;
+    address private constant DUAL_STAKING =
+        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
