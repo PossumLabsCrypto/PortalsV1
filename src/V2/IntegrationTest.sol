@@ -3,17 +3,21 @@ pragma solidity =0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IWater} from "./interfaces/IWater.sol";
 import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
+import {SingleStakingParams} from "./interfaces/SingleStakingParams.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
 error InsufficientStakeBalance();
 error IncorrectAmountNativeETH();
 error FailedToSendNativeToken();
+error TimeLockActive();
+error NotOwner();
 
-contract IntegrationTest is Ownable {
+contract IntegrationTest {
     constructor() {
+        OWNER = msg.sender;
+
         vaultAddresses[USDCE_ADDRESS] = USDCE_WATER;
         vaultAddresses[USDC_ADDRESS] = USDC_WATER;
         vaultAddresses[WETH_ADDRESS] = WETH_WATER;
@@ -43,6 +47,9 @@ contract IntegrationTest is Ownable {
     // PARAMETERS
     // ==============================================
     using SafeERC20 for IERC20;
+
+    address public immutable OWNER;
+    uint256 public acceptedTimeLock;
 
     address private constant USDCE_ADDRESS =
         0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8; // pid 4
@@ -86,6 +93,16 @@ contract IntegrationTest is Ownable {
         115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
     // ==============================================
+    // MODIFIERS
+    // ==============================================
+    modifier onlyOwner() {
+        if (msg.sender != OWNER) {
+            revert NotOwner();
+        }
+        _;
+    }
+
+    // ==============================================
     // Staking & Unstaking
     // ==============================================
     // Deposit
@@ -93,6 +110,11 @@ contract IntegrationTest is Ownable {
         // Change the IWater interface dynamically according to input token
         address vaultAddress = vaultAddresses[_token];
         uint256 depositShares;
+
+        // Check if timeLock is zero to protect from griefing attack
+        if (SingleStakingParams(SINGLE_STAKING).timeLock() > acceptedTimeLock) {
+            revert TimeLockActive();
+        }
 
         // Check if handling native ETH
         if (_token == address(0)) {
@@ -122,6 +144,7 @@ contract IntegrationTest is Ownable {
         vaultSharesStaked[_token] += depositShares;
     }
 
+    // ======================== TESTING ===========================
     // Withdrawal of vault share from single staking
     function withdrawSingleStaking(address _token) public onlyOwner {
         // Change the IWater interface dynamically according to input token
@@ -141,7 +164,8 @@ contract IntegrationTest is Ownable {
         withdrawShares = IWater(vaultAddress).convertToShares(_amount);
     }
 
-    // ============================ BROKEN ========================
+    // ============================================================
+
     // Withdrawal of asset token
     function withdraw(address _token, uint256 _amount) public onlyOwner {
         // Change the IWater interface dynamically according to input token
@@ -243,11 +267,30 @@ contract IntegrationTest is Ownable {
     // ==============================================
     // Increase the token spending allowance of Vault Shares by the Single Staking contract
     function increaseAllowanceSingleStaking(address _asset) public {
-        // Allow spending of Vault shares of an asset by the staking contract
+        // Allow spending of Vault shares of an asset by the single staking contract
         IERC20(vaultAddresses[_asset]).safeIncreaseAllowance(
             SINGLE_STAKING,
             MAX_UINT
         );
+    }
+
+    // Increase the token spending allowance of Assets by the associated Vault (WATER)
+    function increaseAllowanceVault(address _asset) public {
+        // Allow spending of Assets by the associated Vault
+        IERC20(_asset).safeIncreaseAllowance(vaultAddresses[_asset], MAX_UINT);
+    }
+
+    function updateBoostMultiplier(address _asset) public {
+        ISingleStaking(SINGLE_STAKING).updateBoostMultiplier(
+            address(this),
+            poolIDs[_asset]
+        );
+    }
+
+    // ================= DEPRECATED =====================
+
+    function updateTimeLockAcceptance(uint256 _duration) public onlyOwner {
+        acceptedTimeLock = _duration;
     }
 
     // Get the PID of a vault share token (WATER)
