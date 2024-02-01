@@ -45,6 +45,7 @@ contract SingleIntegrationTest {
     address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     uint256 public assetsStaked;
+    uint256 public sharesOwned;
 
     // ==============================================
     // Staking & Unstaking
@@ -69,15 +70,18 @@ contract SingleIntegrationTest {
             IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
         }
 
-        // increase tracker of staked assets
-        assetsStaked += _amount;
-
         // Allow spending token and deposit into Vault to receive Shares (WATER)
         // Approval of token spending is handled with separate function to save gas
         uint256 depositShares = IWater(WETH_WATER).deposit(
             _amount,
             address(this)
         );
+
+        // increase tracker of staked assets
+        assetsStaked += _amount;
+
+        // Update the amount of Vault Shares owned by the contract
+        sharesOwned += depositShares;
 
         // Stake the Vault Shares into the staking contract using the pool identifier (pid)
         // Approval of token spending is handled with separate function to save gas
@@ -100,12 +104,8 @@ contract SingleIntegrationTest {
         // Reduce tracker of user and global stakes
         assetsStaked -= _amount;
 
-        // ISSUE: At this point, the contract will pay out less shares over time, perma-locking the remainders
-        // The contract must know how many shares are principal and how many are profit
-        // Track user´s debt in asset and total asset debt of all users
-        // convert total debt of all users into shares on each call -> this is principal
-        // rest of shares are profit
-        // profit can be redeemed and arbitraged -> This changes the convert() function
+        // Update the amount of Vault Shares owned by the contract
+        sharesOwned -= withdrawShares;
 
         // helper variables for withdraw amount sanity check
         uint256 balanceBefore;
@@ -148,8 +148,12 @@ contract SingleIntegrationTest {
     }
 
     // ==============================================
-    // Claiming Rewards from esVKA Staking
+    // Claiming Rewards from esVKA Staking & Water
     // ==============================================
+    function collectProfitOfAssetVault() public {
+        uint256 profit = getProfitOfAssetInVault();
+        withdraw(WETH_ADDRESS, profit);
+    }
 
     // Get current USDC rewards pending from protocol fees
     function getPendingRewardsUSDC() external view returns (uint256 rewards) {
@@ -176,6 +180,10 @@ contract SingleIntegrationTest {
     // ==============================================
     // HELPER FUNCTIONS
     // ==============================================
+    function getProfitOfAssetInVault() public view returns (uint256 profit) {
+        profit = IWater(WETH_WATER).convertToAssets(sharesOwned) - assetsStaked;
+    }
+
     function getVaultLockTime() public view returns (uint256 lockTime) {
         lockTime = IWater(WETH_WATER).lockTime();
     }
