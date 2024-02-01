@@ -36,6 +36,8 @@ error InsufficientToWithdraw();
 error InvalidAddress();
 error InvalidAmount();
 error InvalidConstructor();
+error NativeTokenNotAllowed();
+error NoProfit();
 error PEtokenNotDeployed();
 error PortalNFTnotDeployed();
 error PortalNotActive();
@@ -323,16 +325,22 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidAmount();
         }
 
-        // Convert native ETH to WETH for contract
+        /// @dev Convert native ETH to WETH for contract
+        /// @dev This section must sit before using _amount elsewhere
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            // Deposit ETH into WETH
+            // Wrap ETH into WETH
             _amount = msg.value;
             IWETH(WETH_ADDRESS).deposit{value: _amount}();
         }
 
-        // If not native ETH, transfer ERC20 token to contract
+        /// @dev If not native ETH, transfer ERC20 token to contract
         if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
-            // transfer token from user to contract
+            /// @dev Prevent contract from receiving ETH when principal is ERC20
+            if (msg.value > 0) {
+                revert NativeTokenNotAllowed();
+            }
+
+            /// @dev Transfer token from user to contract
             IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(
                 msg.sender,
                 address(this),
@@ -351,7 +359,7 @@ contract PortalV2 is ReentrancyGuard {
 
         ) = getUpdateAccount(msg.sender, _amount, true);
 
-        /// @dev Update the user´s stake struct
+        /// @dev Update the user stake struct
         _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
 
         /// @dev Update the total stake balance
@@ -610,20 +618,20 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev Approve the amount of tokens to be transferred
     /// @dev Transfer the tokens from the Portal to the external protocol via interface
     function _depositToYieldSource(uint256 _amount) private {
-        // Check that timeLock is zero to protect from griefing attack
+        /// @dev Check that timeLock is zero to protect from griefing attack
         if (IWater(VAULT_ADDRESS).lockTime() > 0) {
             revert TimeLockActive();
         }
 
-        // Allow spending token and deposit into Vault to receive Shares (WATER)
+        /// @dev Deposit Token into Vault to receive Shares (WATER)
         // Approval of token spending is handled with separate function to save gas
         uint256 depositShares = IWater(VAULT_ADDRESS).deposit(
             _amount,
             address(this)
         );
 
-        // Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        // Approval of token spending is handled with separate function to save gas
+        /// @dev Stake the Vault Shares into the staking contract using the pool identifier (pid)
+        /// @dev Approval of token spending is handled with separate function to save gas
         ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, depositShares);
     }
 
@@ -632,41 +640,41 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev It transfers the tokens from the external protocol to the Portal via interface
     /// @param _amount The amount of tokens to withdraw
     function _withdrawFromYieldSource(address _user, uint256 _amount) private {
-        // Calculate number of Vault Shares that equal the withdraw amount
+        /// @dev Calculate number of Vault Shares that equal the withdraw amount
         uint256 withdrawShares = IWater(VAULT_ADDRESS).convertToShares(_amount);
 
-        // Get the withdrawable assets from burning Vault Shares (avoid rounding issue)
+        /// @dev Get the withdrawable assets from burning Vault Shares (consider rounding)
         uint256 withdrawAssets = IWater(VAULT_ADDRESS).convertToAssets(
             withdrawShares
         );
 
-        // helper variables for withdraw amount sanity check
+        /// @dev Initialize helper variables for withdraw amount sanity check
         uint256 balanceBefore;
         uint256 balanceAfter;
 
-        // Withdraw Vault Shares from Single Staking Contract
+        /// @dev Withdraw Vault Shares from Single Staking Contract
         ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, withdrawShares);
 
-        // Check if handling native ETH
+        /// @dev Check if handling native ETH
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            // Withdraw the staked ETH from Vault
+            /// @dev Withdraw the staked ETH from Vault
             balanceBefore = address(this).balance;
             IWater(VAULT_ADDRESS).withdrawETH(withdrawAssets);
             balanceAfter = address(this).balance;
 
-            // Sanity check on obtained amount from Vault
+            /// @dev Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
-            // Transfer the obtained ETH to the user
+            /// @dev Transfer the obtained ETH to the user
             (bool sent, ) = payable(_user).call{value: _amount}("");
             if (!sent) {
                 revert FailedToSendNativeToken();
             }
         }
 
-        // Check if handling ERC20 token
+        /// @dev Check if handling ERC20 token
         if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
-            // Withdraw the staked assets from Vault
+            /// @dev Withdraw the staked assets from Vault
             balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
                 address(this)
             );
@@ -679,72 +687,83 @@ contract PortalV2 is ReentrancyGuard {
                 address(this)
             );
 
-            // Sanity check on obtained amount from Vault
+            /// @dev Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
-            // Transfer the obtained assets to the user
+            /// @dev Transfer the obtained assets to the user
             IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(_user, _amount);
         }
     }
 
-    /// @notice Claim rewards related to HLP and HMX staked by this contract
-    /// @dev This function claims staking rewards from the external protocol to the Portal
-    /// @dev Transfer the tokens from the external protocol to the Portal via interface
-    function claimRewardsHLPandHMX() external {
-        // /// @dev Initialize the first input array for the compounder and assign values
-        // address[] memory pools = new address[](2);
-        // pools[0] = HLP_STAKING;
-        // pools[1] = HMX_STAKING;
-        // /// @dev Initialize the second input array for the compounder and assign values
-        // address[][] memory rewarders = new address[][](2);
-        // rewarders[0] = new address[](2);
-        // rewarders[0][0] = HLP_PROTOCOL_REWARDER;
-        // rewarders[0][1] = HLP_EMISSIONS_REWARDER;
-        // rewarders[1] = new address[](3);
-        // rewarders[1][0] = HMX_PROTOCOL_REWARDER;
-        // rewarders[1][1] = HMX_EMISSIONS_REWARDER;
-        // rewarders[1][2] = HMX_DRAGONPOINTS_REWARDER;
-        // /// @dev Claim rewards from HLP and HMX staking via the interface
-        // /// @dev esHMX and DP rewards are staked automatically, USDC is transferred to contract
-        // ICompounder(COMPOUNDER_ADDRESS).compound(
-        //     pools,
-        //     rewarders,
-        //     HMX_TIMESTAMP,
-        //     HMX_NUMBER,
-        //     new uint256[](0)
-        // );
-        // /// @dev Emit event that rewards have been claimed
-        // emit RewardsClaimed(pools, rewarders, block.timestamp);
+    /// @dev Claim pending esVKA and USDC rewards, restake esVKA
+    function claimRewards() external {
+        // Claim esVKA rewards from staking the asset
+        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, 0);
+
+        uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
+
+        // Stake esVKA
+        // Approval of token spending is handled with separate function to save gas
+        if (esVKABalance > 0) {
+            IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
+        }
+
+        // Claim esVKA and USDC from DualStaking, stake the esVKA reward and send USDC to contract
+        IDualStaking(DUAL_STAKING).compound();
     }
 
-    /// @notice If the above claim function breaks in the future, use this function to claim specific rewards
-    /// @param _pools The pools to claim rewards from
-    /// @param _rewarders The rewarders to claim rewards from
-    function claimRewardsManual(
-        address[] memory _pools,
-        address[][] memory _rewarders
-    ) external {
-        // /// @dev claim rewards from any staked token and any rewarder via interface
-        // /// @dev esHMX and DP rewards are staked automatically, USDC or other reward tokens are transferred to Portal
-        // ICompounder(COMPOUNDER_ADDRESS).compound(
-        //     _pools,
-        //     _rewarders,
-        //     HMX_TIMESTAMP,
-        //     HMX_NUMBER,
-        //     new uint256[](0)
-        // );
-        // /// @dev Emit event that rewards have been claimed
-        // emit RewardsClaimed(_pools, _rewarders, block.timestamp);
+    /// @dev Withdraws the asset surplus from Vault to Portal
+    function collectProfitOfAssetVault() public {
+        (uint256 profit, uint256 shares) = getProfitOfAssetVault();
+
+        /// @dev Check if there is profit to withdraw
+        if (profit == 0 || shares == 0) {
+            revert NoProfit();
+        }
+
+        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
+        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
+
+        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
+        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
     }
 
-    /// @notice View claimable yield from a specific rewarder contract of the yield source
-    /// @dev This function shows the claimable yield from a specific rewarder contract of the yield source
-    /// @param _rewarder The rewarder contract whose pending reward is to be viewed
-    /// @return claimableReward The amount of claimable tokens from this rewarder
-    function getPendingRewards(
-        address _rewarder
-    ) external view returns (uint256 claimableReward) {
-        // claimableReward = IRewarder(_rewarder).pendingReward(address(this));
+    /// @dev Get current USDC rewards pending from protocol fees
+    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
+        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
+    }
+
+    /// @dev View the net surplus assets of Portal in Vault after withdrawal fees
+    function getProfitOfAssetVault()
+        public
+        view
+        returns (uint256 profitAsset, uint256 profitShares)
+    {
+        /// @dev Get the Vault shares owned by Portal
+        uint256 sharesOwned = ISingleStaking(SINGLE_STAKING).getUserAmount(
+            POOL_ID,
+            address(this)
+        );
+
+        /// @dev Calculate the shares to be reserved for user withdrawals
+        uint256 sharesDebt = IWater(VAULT_ADDRESS).convertToShares(
+            totalPrincipalStaked
+        );
+
+        /// @dev Get withdrawal fee and denominator from Vault
+        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
+        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
+
+        /// @dev Calculate the surplus shares owned by the Portal
+        profitShares = (sharesOwned > sharesDebt)
+            ? sharesOwned - sharesDebt
+            : 0;
+
+        /// @dev Calculate the net profit in assets
+        profitAsset =
+            (IWater(VAULT_ADDRESS).convertToAssets(profitShares) *
+                (denominator - withdrawalFee)) /
+            denominator;
     }
 
     // ============================================

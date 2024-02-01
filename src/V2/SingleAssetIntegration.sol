@@ -19,6 +19,7 @@ error FailedToSendNativeToken();
 error TimeLockActive();
 error InvalidAmount();
 error NoProfit();
+error NativeTokenNotAllowed();
 
 contract SingleIntegrationTest {
     constructor() {}
@@ -31,10 +32,11 @@ contract SingleIntegrationTest {
         115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
     // CHANGE THIS PER ASSET -> CONSTRUCTOR
-    address public constant PRINCIPAL_TOKEN_ADDRESS = address(0);
+    address public constant PRINCIPAL_TOKEN_ADDRESS =
+        0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
     address public constant VAULT_ADDRESS =
-        0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
-    uint256 public constant POOL_ID = 10;
+        0x9045ae36f963b7184861BDce205ea8B08913B48c;
+    uint256 public constant POOL_ID = 5;
     // ------------------------------------
 
     address public constant WETH_ADDRESS =
@@ -59,15 +61,21 @@ contract SingleIntegrationTest {
         }
 
         /// @dev Convert native ETH to WETH for contract
+        /// @dev This section must sit before using _amount elsewhere
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
             /// @dev Wrap ETH into WETH
             _amount = msg.value;
             IWETH(WETH_ADDRESS).deposit{value: _amount}();
         }
 
-        // If not native ETH, transfer ERC20 token to contract
+        /// @dev If not native ETH, transfer ERC20 token to contract
         if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
-            // transfer token from user to contract
+            /// @dev Prevent contract from receiving ETH when using ERC20 token
+            if (msg.value > 0) {
+                revert NativeTokenNotAllowed();
+            }
+
+            /// @dev Transfer token from user to contract
             IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(
                 msg.sender,
                 address(this),
@@ -86,20 +94,20 @@ contract SingleIntegrationTest {
     /// @dev Approve the amount of tokens to be transferred
     /// @dev Transfer the tokens from the Portal to the external protocol via interface
     function _depositToYieldSource(uint256 _amount) private {
-        // Check that timeLock is zero to protect from griefing attack
+        /// @dev Check that timeLock is zero to protect from griefing attack
         if (IWater(VAULT_ADDRESS).lockTime() > 0) {
             revert TimeLockActive();
         }
 
-        // Allow spending token and deposit into Vault to receive Shares (WATER)
+        /// @dev Deposit Token into Vault to receive Shares (WATER)
         // Approval of token spending is handled with separate function to save gas
         uint256 depositShares = IWater(VAULT_ADDRESS).deposit(
             _amount,
             address(this)
         );
 
-        // Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        // Approval of token spending is handled with separate function to save gas
+        /// @dev Stake the Vault Shares into the staking contract using the pool identifier (pid)
+        /// @dev Approval of token spending is handled with separate function to save gas
         ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, depositShares);
     }
 
@@ -121,41 +129,41 @@ contract SingleIntegrationTest {
     }
 
     function _withdrawFromYieldSource(address _user, uint256 _amount) private {
-        // Calculate number of Vault Shares that equal the withdraw amount
+        /// @dev Calculate number of Vault Shares that equal the withdraw amount
         uint256 withdrawShares = IWater(VAULT_ADDRESS).convertToShares(_amount);
 
-        // Get the withdrawable assets from burning Vault Shares (avoid rounding issue)
+        /// @dev Get the withdrawable assets from burning Vault Shares (consider rounding)
         uint256 withdrawAssets = IWater(VAULT_ADDRESS).convertToAssets(
             withdrawShares
         );
 
-        // helper variables for withdraw amount sanity check
+        /// @dev Initialize helper variables for withdraw amount sanity check
         uint256 balanceBefore;
         uint256 balanceAfter;
 
-        // Withdraw Vault Shares from Single Staking Contract
+        /// @dev Withdraw Vault Shares from Single Staking Contract
         ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, withdrawShares);
 
-        // Check if handling native ETH
+        /// @dev Check if handling native ETH
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            // Withdraw the staked ETH from Vault
+            /// @dev Withdraw the staked ETH from Vault
             balanceBefore = address(this).balance;
             IWater(VAULT_ADDRESS).withdrawETH(withdrawAssets);
             balanceAfter = address(this).balance;
 
-            // Sanity check on obtained amount from Vault
+            /// @dev Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
-            // Transfer the obtained ETH to the user
+            /// @dev Transfer the obtained ETH to the user
             (bool sent, ) = payable(_user).call{value: _amount}("");
             if (!sent) {
                 revert FailedToSendNativeToken();
             }
         }
 
-        // Check if handling ERC20 token
+        /// @dev Check if handling ERC20 token
         if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
-            // Withdraw the staked assets from Vault
+            /// @dev Withdraw the staked assets from Vault
             balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
                 address(this)
             );
@@ -168,10 +176,10 @@ contract SingleIntegrationTest {
                 address(this)
             );
 
-            // Sanity check on obtained amount from Vault
+            /// @dev Sanity check on obtained amount from Vault
             _amount = balanceAfter - balanceBefore;
 
-            // Transfer the obtained assets to the user
+            /// @dev Transfer the obtained assets to the user
             IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(_user, _amount);
         }
     }
@@ -179,26 +187,6 @@ contract SingleIntegrationTest {
     // ==============================================
     // Claiming Rewards from esVKA Staking & Water
     // ==============================================
-    function collectProfitOfAssetVault() public {
-        (uint256 profit, uint256 shares) = getProfitOfAssetVault();
-
-        /// @dev Check if there is profit to withdraw
-        if (profit == 0 || shares == 0) {
-            revert NoProfit();
-        }
-
-        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
-
-        /// @dev Withdraw the profit Assets from the Vault (collects WETH from ETH Vault)
-        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
-    }
-
-    // Get current USDC rewards pending from protocol fees
-    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
-        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
-    }
-
     /// @dev Claim pending esVKA and USDC rewards, restake esVKA
     function claimRewards() external {
         // Claim esVKA rewards from staking the asset
@@ -216,30 +204,63 @@ contract SingleIntegrationTest {
         IDualStaking(DUAL_STAKING).compound();
     }
 
-    // ==============================================
-    // HELPER FUNCTIONS
-    // ==============================================
+    /// @dev Withdraws the asset surplus from Vault to Portal
+    function collectProfitOfAssetVault() public {
+        (uint256 profit, uint256 shares) = getProfitOfAssetVault();
+
+        /// @dev Check if there is profit to withdraw
+        if (profit == 0 || shares == 0) {
+            revert NoProfit();
+        }
+
+        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
+        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
+
+        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
+        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
+    }
+
+    /// @dev Get current USDC rewards pending from protocol fees
+    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
+        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
+    }
+
+    /// @dev View the net surplus assets of Portal in Vault after withdrawal fees
     function getProfitOfAssetVault()
         public
         view
         returns (uint256 profitAsset, uint256 profitShares)
     {
+        /// @dev Get the Vault shares owned by Portal
         uint256 sharesOwned = ISingleStaking(SINGLE_STAKING).getUserAmount(
             POOL_ID,
             address(this)
         );
 
+        /// @dev Calculate the shares to be reserved for user withdrawals
         uint256 sharesDebt = IWater(VAULT_ADDRESS).convertToShares(
             totalPrincipalStaked
         );
 
+        /// @dev Get withdrawal fee and denominator from Vault
+        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
+        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
+
+        /// @dev Calculate the surplus shares owned by the Portal
         profitShares = (sharesOwned > sharesDebt)
             ? sharesOwned - sharesDebt
             : 0;
 
-        profitAsset = IWater(VAULT_ADDRESS).convertToAssets(profitShares);
+        /// @dev Calculate the net profit in assets
+        profitAsset =
+            (IWater(VAULT_ADDRESS).convertToAssets(profitShares) *
+                (denominator - withdrawalFee)) /
+            denominator;
     }
 
+    // ==============================================
+    // HELPER FUNCTIONS
+    // ==============================================
     function getVaultLockTime() public view returns (uint256 lockTime) {
         lockTime = IWater(VAULT_ADDRESS).lockTime();
     }

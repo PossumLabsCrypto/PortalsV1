@@ -20,4 +20,8 @@ interface IWater {
     function convertToAssets(uint256 shares) external view returns (uint256);
 
     function lockTime() external view returns (uint256);
+
+    function withdrawalFees() external view returns (uint256);
+
+    function DENOMINATOR() external view returns (uint256);
 }
