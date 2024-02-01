@@ -12,6 +12,11 @@ interface ISingleStaking {
 
     function poolLength() external view returns (uint256);
 
+    function getUserAmount(
+        uint256 _pid,
+        address _user
+    ) external view returns (uint256);
+
     function updateBoostMultiplier(
         address _user,
         uint256 _pid

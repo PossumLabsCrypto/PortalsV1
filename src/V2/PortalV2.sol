@@ -11,6 +11,12 @@ import {IWater} from "./interfaces/IWater.sol";
 import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
+interface IWETH {
+    function deposit() external payable;
+
+    function withdraw(uint256) external;
+}
+
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
@@ -34,6 +40,7 @@ error PEtokenNotDeployed();
 error PortalNFTnotDeployed();
 error PortalNotActive();
 error PortalAlreadyActive();
+error TimeLockActive();
 error TokenExists();
 
 /// @title Portal Contract V2
@@ -58,6 +65,8 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _FUNDING_MIN_AMOUNT,
         uint256 _FUNDING_EXCHANGE_RATIO,
         address _PRINCIPAL_TOKEN_ADDRESS,
+        address _VAULT_ADDRESS,
+        uint256 _POOL_ID,
         uint256 _DECIMALS,
         uint256 _AMOUNT_TO_CONVERT,
         string memory _METAT_DATA_URI
@@ -74,7 +83,7 @@ contract PortalV2 is ReentrancyGuard {
         if (_FUNDING_EXCHANGE_RATIO == 0) {
             revert InvalidConstructor();
         }
-        if (_PRINCIPAL_TOKEN_ADDRESS == address(0)) {
+        if (_VAULT_ADDRESS == address(0)) {
             revert InvalidConstructor();
         }
         if (_DECIMALS == 0) {
@@ -91,6 +100,8 @@ contract PortalV2 is ReentrancyGuard {
         FUNDING_MIN_AMOUNT = _FUNDING_MIN_AMOUNT;
         FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
+        VAULT_ADDRESS = payable(_VAULT_ADDRESS);
+        POOL_ID = _POOL_ID;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
@@ -109,6 +120,10 @@ contract PortalV2 is ReentrancyGuard {
     bool public bTokenCreated; // flag for bToken deployment
     bool public portalEnergyTokenCreated; // flag for PE token deployment
     bool public PortalNFTcreated; // flag for Portal NFT contract deployment
+    uint256 private constant MAX_UINT =
+        115792089237316195423570985008687907853269984665640564039457584007913129639935;
+    address public constant WETH_ADDRESS =
+        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
     address public constant PSM_ADDRESS =
         0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
@@ -118,34 +133,20 @@ contract PortalV2 is ReentrancyGuard {
     uint256 public immutable CREATION_TIME; // time stamp of deployment
     string public NFT_META_DATA; // IPFS uri for Portal Position NFTs metadata
     uint256 public maxLockDuration = 7776000; // starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
-    uint256 public totalPrincipalStaked; // shows how much principal is staked by all users combined
+    uint256 public totalPrincipalStaked; // returns how much principal is staked by all users combined
     bool private lockDurationUpdateable = true; // flag to signal if the lock duration can still be updated
 
-    // principal management related
+    // principal management related - External Integration
     address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
+    address payable public immutable VAULT_ADDRESS;
+    uint256 public immutable POOL_ID;
 
-    // address payable private constant COMPOUNDER_ADDRESS =
-    //     payable(0x8E5D083BA7A46f13afccC27BFB7da372E9dFEF22);
-    // address payable private constant HLP_STAKING =
-    //     payable(0xbE8f8AF5953869222eA8D39F1Be9d03766010B1C);
-    // address private constant HLP_PROTOCOL_REWARDER =
-    //     0x665099B3e59367f02E5f9e039C3450E31c338788;
-    // address private constant HLP_EMISSIONS_REWARDER =
-    //     0x6D2c18B559C5343CB0703bB55AADB5f22152cC32;
-
-    // address private constant HMX_STAKING =
-    //     0x92E586B8D4Bf59f4001604209A292621c716539a;
-    // address private constant HMX_PROTOCOL_REWARDER =
-    //     0xB698829C4C187C85859AD2085B24f308fC1195D3;
-    // address private constant HMX_EMISSIONS_REWARDER =
-    //     0x94c22459b145F012F1c6791F2D729F7a22c44764;
-    // address private constant HMX_DRAGONPOINTS_REWARDER =
-    //     0xbEDd351c62111FB7216683C2A26319743a06F273;
-
-    // uint256 private constant HMX_TIMESTAMP = 1689206400;
-    // uint256 private constant HMX_NUMBER =
-    //     115792089237316195423570985008687907853269984665640564039457584007913129639935;
+    address private constant SINGLE_STAKING =
+        0x314223E2fA375F972E159002Eb72A96301E99e22;
+    address private constant DUAL_STAKING =
+        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
+    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     // bootstrapping related
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds that the funding phase lasts before Portal can be activated
@@ -314,10 +315,29 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev Update the global tracker of staked principal
     /// @dev Deposit the principal into the yield source (external protocol)
     /// @param _amount The amount of tokens to stake
-    function stake(uint256 _amount) external nonReentrant activePortalCheck {
+    function stake(
+        uint256 _amount
+    ) external payable nonReentrant activePortalCheck {
         /// @dev Revert if the staked amount is zero
         if (_amount == 0) {
             revert InvalidAmount();
+        }
+
+        // Convert native ETH to WETH for contract
+        if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
+            // Deposit ETH into WETH
+            _amount = msg.value;
+            IWETH(WETH_ADDRESS).deposit{value: _amount}();
+        }
+
+        // If not native ETH, transfer ERC20 token to contract
+        if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
+            // transfer token from user to contract
+            IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(
+                msg.sender,
+                address(this),
+                _amount
+            );
         }
 
         /// @dev Get the current status of the user´s stake
@@ -337,13 +357,6 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Update the total stake balance
         totalPrincipalStaked += _amount;
 
-        /// @dev Transfer the user's principal tokens to the contract
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(
-            msg.sender,
-            address(this),
-            _amount
-        );
-
         /// @dev Deposit the principal into the yield source (external protocol)
         _depositToYieldSource(_amount);
 
@@ -359,7 +372,7 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev Send the principal tokens to the user
     /// @param _amount The amount of tokens to unstake
     function unstake(uint256 _amount) external nonReentrant {
-        /// @dev Require that the unstaked amount is greater than zero
+        /// @dev Check that the unstaked amount is greater than zero
         if (_amount == 0) {
             revert InvalidAmount();
         }
@@ -382,22 +395,8 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= _amount;
 
-        /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
-        /// @dev Sanity check that the withdrawn amount from yield source is the amount sent to user
-        uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-            address(this)
-        );
-        _withdrawFromYieldSource(_amount);
-        uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-            address(this)
-        );
-        uint256 availableAmount = balanceAfter - balanceBefore;
-
-        /// @dev Send the recovered principal tokens to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
-            msg.sender,
-            availableAmount
-        );
+        /// @dev Withdraw the assets from external Protocol and send to user
+        _withdrawFromYieldSource(msg.sender, _amount);
 
         /// @dev Emit event that tokens have been unstaked
         emit PrincipalUnstaked(msg.sender, _amount);
@@ -454,7 +453,7 @@ contract PortalV2 is ReentrancyGuard {
             address(this)
         );
 
-        _withdrawFromYieldSource(oldStakedBalance);
+        _withdrawFromYieldSource(msg.sender, oldStakedBalance);
         uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
             address(this)
         );
@@ -611,22 +610,81 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev Approve the amount of tokens to be transferred
     /// @dev Transfer the tokens from the Portal to the external protocol via interface
     function _depositToYieldSource(uint256 _amount) private {
-        /// @dev Approve the amount to be transferred
-        // IERC20(PRINCIPAL_TOKEN_ADDRESS).safeIncreaseAllowance(
-        //     HLP_STAKING,
-        //     _amount
-        // );
-        /// @dev Transfer the approved balance to the external protocol using the interface
-        // IStaking(HLP_STAKING).deposit(address(this), _amount);
+        // Check that timeLock is zero to protect from griefing attack
+        if (IWater(VAULT_ADDRESS).lockTime() > 0) {
+            revert TimeLockActive();
+        }
+
+        // Allow spending token and deposit into Vault to receive Shares (WATER)
+        // Approval of token spending is handled with separate function to save gas
+        uint256 depositShares = IWater(VAULT_ADDRESS).deposit(
+            _amount,
+            address(this)
+        );
+
+        // Stake the Vault Shares into the staking contract using the pool identifier (pid)
+        // Approval of token spending is handled with separate function to save gas
+        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, depositShares);
     }
 
     /// @notice Withdraw principal from the yield source to the Portal
     /// @dev This function withdraws principal tokens from the external protocol to the Portal
     /// @dev It transfers the tokens from the external protocol to the Portal via interface
     /// @param _amount The amount of tokens to withdraw
-    function _withdrawFromYieldSource(uint256 _amount) private {
-        /// @dev Withdraw the staked balance from external protocol using the interface
-        // IStaking(HLP_STAKING).withdraw(_amount);
+    function _withdrawFromYieldSource(address _user, uint256 _amount) private {
+        // Calculate number of Vault Shares that equal the withdraw amount
+        uint256 withdrawShares = IWater(VAULT_ADDRESS).convertToShares(_amount);
+
+        // Get the withdrawable assets from burning Vault Shares (avoid rounding issue)
+        uint256 withdrawAssets = IWater(VAULT_ADDRESS).convertToAssets(
+            withdrawShares
+        );
+
+        // helper variables for withdraw amount sanity check
+        uint256 balanceBefore;
+        uint256 balanceAfter;
+
+        // Withdraw Vault Shares from Single Staking Contract
+        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, withdrawShares);
+
+        // Check if handling native ETH
+        if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
+            // Withdraw the staked ETH from Vault
+            balanceBefore = address(this).balance;
+            IWater(VAULT_ADDRESS).withdrawETH(withdrawAssets);
+            balanceAfter = address(this).balance;
+
+            // Sanity check on obtained amount from Vault
+            _amount = balanceAfter - balanceBefore;
+
+            // Transfer the obtained ETH to the user
+            (bool sent, ) = payable(_user).call{value: _amount}("");
+            if (!sent) {
+                revert FailedToSendNativeToken();
+            }
+        }
+
+        // Check if handling ERC20 token
+        if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
+            // Withdraw the staked assets from Vault
+            balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
+                address(this)
+            );
+            IWater(VAULT_ADDRESS).withdraw(
+                withdrawAssets,
+                address(this),
+                address(this)
+            );
+            balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
+                address(this)
+            );
+
+            // Sanity check on obtained amount from Vault
+            _amount = balanceAfter - balanceBefore;
+
+            // Transfer the obtained assets to the user
+            IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(_user, _amount);
+        }
     }
 
     /// @notice Claim rewards related to HLP and HMX staked by this contract
