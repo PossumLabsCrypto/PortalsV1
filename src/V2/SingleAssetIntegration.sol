@@ -206,7 +206,7 @@ contract SingleIntegrationTest {
 
     /// @dev Withdraws the asset surplus from Vault to Portal
     function collectProfitOfAssetVault() public {
-        (uint256 profit, uint256 shares) = getProfitOfAssetVault();
+        (uint256 profit, uint256 shares) = _getProfitOfAssetVault();
 
         /// @dev Check if there is profit to withdraw
         if (profit == 0 || shares == 0) {
@@ -225,9 +225,9 @@ contract SingleIntegrationTest {
         rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
     }
 
-    /// @dev View the net surplus assets of Portal in Vault after withdrawal fees
-    function getProfitOfAssetVault()
-        public
+    /// @dev Get the surplus assets in the Vault excluding withdrawal fee for internal use
+    function _getProfitOfAssetVault()
+        private
         view
         returns (uint256 profitAsset, uint256 profitShares)
     {
@@ -242,20 +242,27 @@ contract SingleIntegrationTest {
             totalPrincipalStaked
         );
 
-        /// @dev Get withdrawal fee and denominator from Vault
-        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
-        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
-
         /// @dev Calculate the surplus shares owned by the Portal
         profitShares = (sharesOwned > sharesDebt)
             ? sharesOwned - sharesDebt
             : 0;
 
         /// @dev Calculate the net profit in assets
-        profitAsset =
-            (IWater(VAULT_ADDRESS).convertToAssets(profitShares) *
-                (denominator - withdrawalFee)) /
-            denominator;
+        profitAsset = IWater(VAULT_ADDRESS).convertToAssets(profitShares);
+    }
+
+    /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
+    function getProfitOfAssetVault()
+        external
+        view
+        returns (uint256 profitAsset)
+    {
+        (uint256 profit, ) = _getProfitOfAssetVault();
+
+        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
+        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
+
+        profitAsset = (profit * (denominator - withdrawalFee)) / denominator;
     }
 
     // ==============================================

@@ -714,7 +714,7 @@ contract PortalV2 is ReentrancyGuard {
 
     /// @dev Withdraws the asset surplus from Vault to Portal
     function collectProfitOfAssetVault() public {
-        (uint256 profit, uint256 shares) = getProfitOfAssetVault();
+        (uint256 profit, uint256 shares) = _getProfitOfAssetVault();
 
         /// @dev Check if there is profit to withdraw
         if (profit == 0 || shares == 0) {
@@ -733,9 +733,9 @@ contract PortalV2 is ReentrancyGuard {
         rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
     }
 
-    /// @dev View the net surplus assets of Portal in Vault after withdrawal fees
-    function getProfitOfAssetVault()
-        public
+    /// @dev Get the surplus assets in the Vault excluding withdrawal fee for internal use
+    function _getProfitOfAssetVault()
+        private
         view
         returns (uint256 profitAsset, uint256 profitShares)
     {
@@ -750,20 +750,27 @@ contract PortalV2 is ReentrancyGuard {
             totalPrincipalStaked
         );
 
-        /// @dev Get withdrawal fee and denominator from Vault
-        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
-        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
-
         /// @dev Calculate the surplus shares owned by the Portal
         profitShares = (sharesOwned > sharesDebt)
             ? sharesOwned - sharesDebt
             : 0;
 
         /// @dev Calculate the net profit in assets
-        profitAsset =
-            (IWater(VAULT_ADDRESS).convertToAssets(profitShares) *
-                (denominator - withdrawalFee)) /
-            denominator;
+        profitAsset = IWater(VAULT_ADDRESS).convertToAssets(profitShares);
+    }
+
+    /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
+    function getProfitOfAssetVault()
+        external
+        view
+        returns (uint256 profitAsset)
+    {
+        (uint256 profit, ) = _getProfitOfAssetVault();
+
+        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
+        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
+
+        profitAsset = (profit * (denominator - withdrawalFee)) / denominator;
     }
 
     // ============================================
@@ -1497,6 +1504,38 @@ contract PortalV2 is ReentrancyGuard {
         }
 
         emit MaxLockDurationUpdated(maxLockDuration);
+    }
+
+    function getVaultLockTime() public view returns (uint256 lockTime) {
+        lockTime = IWater(VAULT_ADDRESS).lockTime();
+    }
+
+    // Increase the token spending allowance of Assets by the associated Vault (WATER)
+    function increaseAllowanceVault() public {
+        // Allow spending of Assets by the associated Vault
+        address tokenAdr = (PRINCIPAL_TOKEN_ADDRESS == address(0))
+            ? WETH_ADDRESS
+            : PRINCIPAL_TOKEN_ADDRESS;
+        IERC20(tokenAdr).safeIncreaseAllowance(VAULT_ADDRESS, MAX_UINT);
+    }
+
+    // Increase the token spending allowance of Vault Shares by the Single Staking contract
+    function increaseAllowanceSingleStaking() public {
+        // Allow spending of Vault shares of an asset by the single staking contract
+        IERC20(VAULT_ADDRESS).safeIncreaseAllowance(SINGLE_STAKING, MAX_UINT);
+    }
+
+    // Increase the token spending allowance of esVKA by the Dual Staking contract
+    function increaseAllowanceDualStaking() public {
+        // Allow spending of esVKA by the Dual Staking contract
+        IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, MAX_UINT);
+    }
+
+    function updateBoostMultiplier() public {
+        ISingleStaking(SINGLE_STAKING).updateBoostMultiplier(
+            address(this),
+            POOL_ID
+        );
     }
 
     receive() external payable {}
