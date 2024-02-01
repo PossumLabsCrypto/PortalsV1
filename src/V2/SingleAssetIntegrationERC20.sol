@@ -7,12 +7,6 @@ import {IWater} from "./interfaces/IWater.sol";
 import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
 
-interface IWETH {
-    function deposit() external payable;
-
-    function withdraw(uint256) external;
-}
-
 error InsufficientStakeBalance();
 error IncorrectAmountNativeETH();
 error FailedToSendNativeToken();
@@ -51,7 +45,7 @@ contract SingleIntegrationTest {
     // Staking & Unstaking
     // ==============================================
     // Deposit
-    function deposit(uint256 _amount) public payable {
+    function deposit(uint256 _amount) public {
         // Check if timeLock is zero to protect from griefing attack
         if (IWater(TOKEN_WATER).lockTime() > 0) {
             revert TimeLockActive();
