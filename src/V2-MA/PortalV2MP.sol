@@ -10,6 +10,7 @@ import {PortalNFT} from "./PortalNFT.sol";
 import {IWater} from "./interfaces/IWater.sol";
 import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
 import {IDualStaking} from "./interfaces/IDualStaking.sol";
+import {IVirtualLP} from "./interfaces/IVirtualLP.sol";
 
 interface IWETH {
     function deposit() external payable;
@@ -63,9 +64,10 @@ error TokenExists();
  */
 contract PortalV2 is ReentrancyGuard {
     constructor(
+        address _VIRTUAL_LP,
+        uint256 _TARGET_CONSTANT,
         uint256 _FUNDING_PHASE_DURATION,
         uint256 _FUNDING_MIN_AMOUNT,
-        uint256 _FUNDING_EXCHANGE_RATIO,
         address _PRINCIPAL_TOKEN_ADDRESS,
         address _VAULT_ADDRESS,
         uint256 _POOL_ID,
@@ -73,6 +75,12 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _AMOUNT_TO_CONVERT,
         string memory _METAT_DATA_URI
     ) {
+        if (_VIRTUAL_LP == address(0)) {
+            revert InvalidConstructor();
+        }
+        if (_TARGET_CONSTANT < 1e25) {
+            revert InvalidConstructor();
+        }
         if (
             _FUNDING_PHASE_DURATION < 259200 ||
             _FUNDING_PHASE_DURATION > 2592000
@@ -82,7 +90,7 @@ contract PortalV2 is ReentrancyGuard {
         if (_FUNDING_MIN_AMOUNT == 0) {
             revert InvalidConstructor();
         }
-        if (_FUNDING_EXCHANGE_RATIO == 0) {
+        if (_TARGET_CONSTANT == 0) {
             revert InvalidConstructor();
         }
         if (_VAULT_ADDRESS == address(0)) {
@@ -98,9 +106,10 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidConstructor();
         }
 
+        VIRTUAL_LP = _VIRTUAL_LP;
+        TARGET_CONSTANT = _TARGET_CONSTANT;
         FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
         FUNDING_MIN_AMOUNT = _FUNDING_MIN_AMOUNT;
-        FUNDING_EXCHANGE_RATIO = _FUNDING_EXCHANGE_RATIO;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
         VAULT_ADDRESS = payable(_VAULT_ADDRESS);
         POOL_ID = _POOL_ID;
@@ -108,6 +117,7 @@ contract PortalV2 is ReentrancyGuard {
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
         NFT_META_DATA = _METAT_DATA_URI;
+        virtualLP = IVirtualLP(VIRTUAL_LP);
     }
 
     // ============================================
@@ -151,9 +161,11 @@ contract PortalV2 is ReentrancyGuard {
     address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     // bootstrapping related
+    IVirtualLP public virtualLP;
+    uint256 private immutable TARGET_CONSTANT; // The constantProduct with which the Portal will be activated
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds after deployment before Portal can be activated
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
-    uint256 public constant FUNDING_APR = 50; // redemption value APR increase of bTokens
+    uint256 public constant FUNDING_APR = 36; // annual redemption value increase (APR) of bTokens
     uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
@@ -162,9 +174,10 @@ contract PortalV2 is ReentrancyGuard {
     bool public isActivePortal; // Start with false, will be set to true when funding phase ends
 
     // exchange related
-    uint256 private immutable FUNDING_EXCHANGE_RATIO; // amount of portalEnergy per PSM for calculating k during funding process
     uint256 public constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
     uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
+
+    address public immutable VIRTUAL_LP; // Address of the collective, virtual LP
 
     // staking related
     // contains information of user stake position
@@ -759,7 +772,7 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     // ============================================
-    // ==               INTERNAL LP              ==
+    // ==               VIRTUAL LP               ==
     // ============================================
     /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
     /// @dev This function allows users to sell PSM tokens to the contract to increase a recipient´s portalEnergy
@@ -803,12 +816,8 @@ contract PortalV2 is ReentrancyGuard {
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
         accounts[_recipient].portalEnergy += amountReceived;
 
-        /// @dev Transfer the PSM tokens from the caller to the contract
-        IERC20(PSM_ADDRESS).transferFrom(
-            msg.sender,
-            address(this),
-            _amountInput
-        );
+        /// @dev Transfer the PSM tokens from the caller to the Virtual LP
+        IERC20(PSM_ADDRESS).transferFrom(msg.sender, VIRTUAL_LP, _amountInput);
 
         /// @dev Emit the portalEnergyBuyExecuted event
         emit PortalEnergyBuyExecuted(msg.sender, _recipient, amountReceived);
@@ -867,14 +876,14 @@ contract PortalV2 is ReentrancyGuard {
             revert InsufficientReceived();
         }
 
-        /// @dev Calculate the caller´s post-trade Portal Energy balance
+        /// @dev Calculate the caller post-trade Portal Energy balance
         portalEnergy -= _amountInput;
 
-        /// @dev Update the user´s stake struct
+        /// @dev Update the user stake struct
         _updateAccount(user, stakedBalance, maxStakeDebt, portalEnergy);
 
-        /// @dev Send the output token to the recipient
-        IERC20(PSM_ADDRESS).transfer(_recipient, amountReceived);
+        /// @dev Instruct the Virtual LP to send PSM directly to the recipient
+        virtualLP.PSM_sendToPortalUser(_recipient, amountReceived);
 
         /// @dev Emit the portalEnergySellExecuted event
         emit PortalEnergySellExecuted(msg.sender, _recipient, _amountInput);
@@ -889,8 +898,7 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
-            fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
 
         /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = constantProduct / reserve0;
@@ -911,8 +919,7 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(address(this)) -
-            fundingRewardPool;
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
 
         /// @dev Calculate the reserve of portalEnergy (input)
         /// @dev Avoid zero value to prevent theoretical drainer attack by donating PSM before selling 1 PE
@@ -945,7 +952,7 @@ contract PortalV2 is ReentrancyGuard {
             revert InvalidAddress();
         }
 
-        /// @dev Prevent zero value input
+        /// @dev Prevent zero value
         if (_minReceived == 0) {
             revert InvalidAmount();
         }
@@ -968,26 +975,53 @@ contract PortalV2 is ReentrancyGuard {
             revert InsufficientReceived();
         }
 
-        /// @dev Check for reward overflow and reallocate rewards to internal LP if necessary (passive)
+        /// @dev initialize helper variables
         uint256 maxRewards = (bToken.totalSupply() *
             FUNDING_MAX_RETURN_PERCENT) / 100;
-        if (fundingRewardPool > maxRewards) {
-            fundingRewardPool = maxRewards;
-        }
+        uint256 PSMbalance = IERC20(PSM_ADDRESS).balanceOf(address(this));
 
-        /// @dev Collect rewards if there is outstanding debt to funders
-        if (fundingRewardPool < maxRewards) {
-            uint256 newRewards = (AMOUNT_TO_CONVERT * FUNDING_REWARD_SHARE) /
-                100;
-            fundingRewardPool += newRewards;
-        }
+        /// @dev Check if all rewards are served, transfer full input PSM to Virtual LP
+        if (PSMbalance == maxRewards) {
+            IERC20(PSM_ADDRESS).transferFrom(
+                msg.sender,
+                VIRTUAL_LP,
+                AMOUNT_TO_CONVERT
+            );
+        } else {
+            /// @dev Check for reward overflow and transfer overflow + input PSM to Virtual LP
+            /// @dev This prevents PSM from ever being stuck in the Portal
+            if (PSMbalance > maxRewards) {
+                uint256 overflow = PSMbalance - maxRewards;
+                fundingRewardPool = maxRewards;
 
-        /// @dev Transfer the input token (PSM) from the user to the contract
-        IERC20(PSM_ADDRESS).transferFrom(
-            msg.sender,
-            address(this),
-            AMOUNT_TO_CONVERT
-        );
+                /// @dev Transfer overflow and input PSM to Virtual LP
+                IERC20(PSM_ADDRESS).safeTransfer(VIRTUAL_LP, overflow);
+                IERC20(PSM_ADDRESS).transferFrom(
+                    msg.sender,
+                    VIRTUAL_LP,
+                    AMOUNT_TO_CONVERT
+                );
+            }
+
+            /// @dev Calculate new rewards if there is outstanding debt to funders
+            /// @dev Transfer the funding rewards to Portal and rest to Virtual LP
+            if (PSMbalance < maxRewards) {
+                uint256 newRewards = (AMOUNT_TO_CONVERT *
+                    FUNDING_REWARD_SHARE) / 100;
+                fundingRewardPool += newRewards;
+
+                IERC20(PSM_ADDRESS).transferFrom(
+                    msg.sender,
+                    address(this),
+                    newRewards
+                );
+                IERC20(PSM_ADDRESS).transferFrom(
+                    msg.sender,
+                    VIRTUAL_LP,
+                    AMOUNT_TO_CONVERT - newRewards
+                );
+            }
+        }
 
         /// @dev Transfer the output token from the contract to the recipient
         if (_token == address(0)) {
@@ -1035,7 +1069,10 @@ contract PortalV2 is ReentrancyGuard {
         isActivePortal = true;
 
         /// @dev Set the constant product K, which is used for calculating the amount of assets in the LP
-        constantProduct = fundingBalance ** 2 / FUNDING_EXCHANGE_RATIO;
+        constantProduct = TARGET_CONSTANT;
+
+        /// @dev Transfer the fundingBalance to the Virtual LP
+        IERC20(PSM_ADDRESS).safeTransfer(VIRTUAL_LP, fundingBalance);
 
         /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
         emit PortalActivated(address(this), fundingBalance);
@@ -1128,7 +1165,7 @@ contract PortalV2 is ReentrancyGuard {
         returns (uint256 amountBurnable)
     {
         /// @dev Calculate the burn value of 1 full bToken in PSM
-        /// @dev Add 1 to handle potential rounding issue in the next step
+        /// @dev Add 1 WEI to handle potential rounding issue in the next step
         uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
 
         /// @dev Calculate and return the amount of bTokens burnable
