@@ -252,6 +252,7 @@ contract SingleIntegrationTest {
     }
 
     /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
+    /// @dev May underestimate the real reward slightly due to precision limit
     function getProfitOfAssetVault()
         external
         view

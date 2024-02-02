@@ -456,23 +456,7 @@ contract PortalV2 is ReentrancyGuard {
         totalPrincipalStaked -= oldStakedBalance;
 
         /// @dev Withdraw the principal from the yield source (external Protocol)
-        /// @dev Sanity check that the withdrawn amount from yield source is the amount sent to user
-        uint256 balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-            address(this)
-        );
-
         _withdrawFromYieldSource(msg.sender, oldStakedBalance);
-        uint256 balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-            address(this)
-        );
-
-        uint256 availableAmount = balanceAfter - balanceBefore;
-
-        /// @dev Send the retrieved tokens to the user
-        IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(
-            msg.sender,
-            availableAmount
-        );
 
         /// @dev Emit event that tokens have been unstaked
         emit PrincipalUnstaked(msg.sender, oldStakedBalance);
@@ -760,6 +744,7 @@ contract PortalV2 is ReentrancyGuard {
     }
 
     /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
+    /// @dev May underestimate the real reward slightly due to precision limit
     function getProfitOfAssetVault()
         external
         view
