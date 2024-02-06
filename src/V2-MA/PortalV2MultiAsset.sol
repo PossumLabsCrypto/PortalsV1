@@ -46,7 +46,7 @@ error PortalAlreadyActive();
 error TimeLockActive();
 error TokenExists();
 
-/// @title Portal Contract V2
+/// @title Portal Contract V2 with shared Virtual LP
 /// @author Possum Labs
 /** @notice This contract accepts user deposits and withdrawals of a specific token
  * The deposits are redirected to an external protocol to generate yield
@@ -62,7 +62,7 @@ error TokenExists();
  * The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token
  * When triggering the Converter, the caller (arbitrager) must send a fixed amount of PSM tokens to the contract
  */
-contract PortalV2 is ReentrancyGuard {
+contract PortalV2MultiAsset is ReentrancyGuard {
     constructor(
         address _VIRTUAL_LP,
         uint256 _TARGET_CONSTANT,
