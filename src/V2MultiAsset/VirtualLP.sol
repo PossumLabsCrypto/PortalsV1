@@ -7,7 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 error PortalNotRegistered();
-error NotAuthorized();
+error NotOwner();
 error InvalidAddress();
 error OwnerNotExpired();
 
@@ -46,7 +46,7 @@ contract VirtualLP is ReentrancyGuard {
 
     modifier onlyOwner() {
         if (msg.sender != owner) {
-            revert NotAuthorized();
+            revert NotOwner();
         }
         _;
     }

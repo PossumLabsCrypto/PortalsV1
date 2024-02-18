@@ -71,7 +71,7 @@ contract PortalV2 is ReentrancyGuard {
         uint256 _POOL_ID,
         uint256 _DECIMALS,
         uint256 _AMOUNT_TO_CONVERT,
-        string memory _METAT_DATA_URI
+        string memory _META_DATA_URI
     ) {
         if (
             _FUNDING_PHASE_DURATION < 259200 ||
@@ -94,7 +94,7 @@ contract PortalV2 is ReentrancyGuard {
         if (_AMOUNT_TO_CONVERT == 0) {
             revert InvalidConstructor();
         }
-        if (keccak256(bytes(_METAT_DATA_URI)) == keccak256(bytes(""))) {
+        if (keccak256(bytes(_META_DATA_URI)) == keccak256(bytes(""))) {
             revert InvalidConstructor();
         }
 
@@ -107,7 +107,7 @@ contract PortalV2 is ReentrancyGuard {
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
-        NFT_META_DATA = _METAT_DATA_URI;
+        NFT_META_DATA = _META_DATA_URI;
     }
 
     // ============================================
@@ -1211,7 +1211,7 @@ contract PortalV2 is ReentrancyGuard {
         );
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
-        bToken = new MintBurnToken(address(this), name, symbol);
+        bToken = new MintBurnToken(name, symbol);
 
         emit bTokenDeployed(address(bToken));
     }
@@ -1240,7 +1240,7 @@ contract PortalV2 is ReentrancyGuard {
         );
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
-        portalEnergyToken = new MintBurnToken(address(this), name, symbol);
+        portalEnergyToken = new MintBurnToken(name, symbol);
 
         emit PortalEnergyTokenDeployed(address(portalEnergyToken));
     }

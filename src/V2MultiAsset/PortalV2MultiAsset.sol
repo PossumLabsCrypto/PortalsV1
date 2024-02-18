@@ -73,7 +73,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _POOL_ID,
         uint256 _DECIMALS,
         uint256 _AMOUNT_TO_CONVERT,
-        string memory _METAT_DATA_URI
+        string memory _META_DATA_URI
     ) {
         if (_VIRTUAL_LP == address(0)) {
             revert InvalidConstructor();
@@ -102,7 +102,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         if (_AMOUNT_TO_CONVERT == 0) {
             revert InvalidConstructor();
         }
-        if (keccak256(bytes(_METAT_DATA_URI)) == keccak256(bytes(""))) {
+        if (keccak256(bytes(_META_DATA_URI)) == keccak256(bytes(""))) {
             revert InvalidConstructor();
         }
 
@@ -116,7 +116,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
-        NFT_META_DATA = _METAT_DATA_URI;
+        NFT_META_DATA = _META_DATA_URI;
         virtualLP = IVirtualLP(VIRTUAL_LP);
     }
 
@@ -333,13 +333,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     function stake(
         uint256 _amount
     ) external payable nonReentrant activePortalCheck {
-        /// @dev Revert if the staked amount is zero
-        if (_amount == 0) {
-            revert InvalidAmount();
-        }
-
         /// @dev Convert native ETH to WETH for contract
-        /// @dev This section must sit before using _amount elsewhere
+        /// @dev This section must sit before using _amount elsewhere to guarantee consistency
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
             // Wrap ETH into WETH
             _amount = msg.value;
@@ -361,7 +356,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             );
         }
 
-        /// @dev Get the current status of the user´s stake
+        /// @dev Revert if the staked amount is zero
+        if (_amount == 0) {
+            revert InvalidAmount();
+        }
+
+        /// @dev Get the current state of the user stake
         (
             ,
             ,
@@ -398,7 +398,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             revert InvalidAmount();
         }
 
-        /// @dev Get the current status of the user´s stake
+        /// @dev Get the current state of the user stake
         /// @dev Throws if caller tries to unstake more than stake balance or with insufficient PE
         (
             ,
@@ -432,7 +432,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev Withdraw the principal from the yield source (external protocol)
     /// @dev Send the retrieved stake balance to the user
     function forceUnstakeAll() external nonReentrant {
-        /// @dev Get the current status of the user´s stake
+        /// @dev Get the current state of the user stake
         (
             ,
             ,
@@ -504,9 +504,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     /// @notice This function deploys the NFT contract unique to this Portal
     /// @dev Deploy an NFT contract with name and symbol related to the principal token
-    /// @dev Must be called before Portal is activated
+    /// @dev Must be called before Portal is activated (implied condition)
     /// @dev Can only be called once
-    function create_portalNFT() public nonActivePortalCheck {
+    function create_portalNFT() public {
         // Check if the NFT contract is already deployed
         if (PortalNFTcreated) {
             revert TokenExists();
@@ -541,13 +541,13 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @notice This function allows users to store their Account in a transferrable NFT
     /// @dev Mint a Portal NFT with the vital information of caller account to a recipient
     /// @dev Delete the caller account
-    function mintNFTposition(address _recipient) public activePortalCheck {
+    function mintNFTposition(address _recipient) public {
         /// @dev Check that the recipient is a valid address
         if (_recipient == address(0)) {
             revert InvalidAddress();
         }
 
-        /// @dev Get the current status of user stake
+        /// @dev Get the current state of the user stake
         (
             ,
             ,
@@ -573,15 +573,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     }
 
     /// @notice This function allows users to redeem their PortalNFT for its content
-    /// @dev Burn the NFT and retrieve its balances
-    /// @dev Add the NFT values to the account of recipient
-    function redeemNFTposition(address _recipient, uint256 _tokenId) public {
-        /// @dev Check that the recipient is a valid address
-        if (_recipient == address(0)) {
-            revert InvalidAddress();
-        }
-
-        /// @dev Get the current status of the recipient Account
+    /// @dev Update the user account to current state. Required because stake balance can change.
+    /// @dev Burn the NFT and retrieve its balances (stake balance & portalEnergy)
+    /// @dev Add the NFT values to the account of the user
+    function redeemNFTposition(uint256 _tokenId) public {
+        /// @dev Get the current state of the user Account
         (
             ,
             ,
@@ -590,21 +586,21 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 maxStakeDebt,
             uint256 portalEnergy,
 
-        ) = getUpdateAccount(_recipient, 0, true);
+        ) = getUpdateAccount(msg.sender, 0, true);
 
         /// @dev Redeem the NFT and get the returned paramters
         (uint256 stakedBalanceNFT, uint256 portalEnergyNFT) = portalNFT.redeem(
-            _tokenId,
-            msg.sender
+            msg.sender,
+            _tokenId
         );
 
-        /// @dev Update recipient Account
+        /// @dev Update user Account
         stakedBalance += stakedBalanceNFT;
         portalEnergy += portalEnergyNFT;
-        _updateAccount(_recipient, stakedBalance, maxStakeDebt, portalEnergy);
+        _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
 
         /// @dev Emit event that the Portal NFT was redeemed
-        emit PortalNFTredeemed(msg.sender, _recipient, _tokenId);
+        emit PortalNFTredeemed(msg.sender, msg.sender, _tokenId);
     }
 
     // ============================================
@@ -709,27 +705,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         IDualStaking(DUAL_STAKING).compound();
     }
 
-    /// @dev Withdraws the asset surplus from Vault to Portal
-    function collectProfitOfAssetVault() public {
-        (uint256 profit, uint256 shares) = _getProfitOfAssetVault();
-
-        /// @dev Check if there is profit to withdraw
-        if (profit == 0 || shares == 0) {
-            revert NoProfit();
-        }
-
-        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
-
-        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
-        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
-    }
-
-    /// @dev Get current USDC rewards pending from protocol fees
-    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
-        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
-    }
-
     /// @dev Get the surplus assets in the Vault excluding withdrawal fee for internal use
     function _getProfitOfAssetVault()
         private
@@ -771,12 +746,33 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         profitAsset = (profit * (denominator - withdrawalFee)) / denominator;
     }
 
+    /// @dev Withdraws the asset surplus from Vault to Portal
+    function collectProfitOfAssetVault() public {
+        (uint256 profit, uint256 shares) = _getProfitOfAssetVault();
+
+        /// @dev Check if there is profit to withdraw
+        if (profit == 0 || shares == 0) {
+            revert NoProfit();
+        }
+
+        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
+        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
+
+        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
+        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
+    }
+
+    /// @dev Get current USDC rewards pending from protocol fees
+    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
+        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
+    }
+
     // ============================================
     // ==               VIRTUAL LP               ==
     // ============================================
     /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
     /// @dev This function allows users to sell PSM tokens to the contract to increase a recipient´s portalEnergy
-    /// @dev Can only be called if the Portal is active
+    /// @dev Can only be called if the Portal is active (implied condition)
     /// @dev Get the correct price from the quote function
     /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
     /// @dev Transfer the PSM tokens from the caller to the contract
@@ -789,7 +785,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInput,
         uint256 _minReceived,
         uint256 _deadline
-    ) external nonReentrant activePortalCheck {
+    ) external nonReentrant {
         /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
             revert InvalidAmount();
@@ -825,7 +821,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Users sell portalEnergy into the Portal to receive PSM to a recipient address
     /// @dev This function allows users to sell portalEnergy to the contract to increase a recipient´s PSM
-    /// @dev Can only be called if the Portal is active
+    /// @dev Can only be called if the Portal is active (implied condition)
     /// @dev Get the correct price from the quote function
     /// @dev Reduce the portalEnergy balance of the caller by the amount of portalEnergy sold
     /// @dev Send PSM to the recipient
@@ -836,7 +832,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInput,
         uint256 _minReceived,
         uint256 _deadline
-    ) external nonReentrant activePortalCheck {
+    ) external nonReentrant {
         /// @dev Check that the input amount & minimum received is greater than zero
         if (_amountInput == 0 || _minReceived == 0) {
             revert InvalidAmount();
@@ -852,7 +848,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             revert DeadlineExpired();
         }
 
-        /// @dev Get the current status of the user´s stake
+        /// @dev Get the current state of user stake
         (
             address user,
             ,
@@ -876,7 +872,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             revert InsufficientReceived();
         }
 
-        /// @dev Calculate the caller post-trade Portal Energy balance
+        /// @dev Calculate the user post-trade Portal Energy balance
         portalEnergy -= _amountInput;
 
         /// @dev Update the user stake struct
@@ -980,8 +976,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             FUNDING_MAX_RETURN_PERCENT) / 100;
         uint256 PSMbalance = IERC20(PSM_ADDRESS).balanceOf(address(this));
 
-        /// @dev Check if all rewards are served, transfer full input PSM to Virtual LP
+        /// @dev Check if all rewards are served, then transfer full input PSM to Virtual LP
         if (PSMbalance == maxRewards) {
+            /// @dev Enforce that fundingRewardPool correctly tracks the rewards
+            fundingRewardPool = PSMbalance;
+
+            /// @dev transfer PSM to the LP
             IERC20(PSM_ADDRESS).transferFrom(
                 msg.sender,
                 VIRTUAL_LP,
@@ -1123,7 +1123,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Calculate the amount of PSM returned to the user
         uint256 withdrawAmount = (_amount * 100) / FUNDING_MAX_RETURN_PERCENT;
 
-        /// @dev Decrease the fundingBalance tracker by the amount of PSM deposited
+        /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
         fundingBalance -= withdrawAmount;
 
         /// @dev Transfer the PSM tokens from the contract to the user
@@ -1141,7 +1141,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @return burnValue The amount of PSM received when redeeming bTokens
     function getBurnValuePSM(
         uint256 _amount
-    ) public view returns (uint256 burnValue) {
+    ) public view activePortalCheck returns (uint256 burnValue) {
         /// @dev Calculate the minimum burn value
         uint256 minValue = (_amount * 100) / FUNDING_MAX_RETURN_PERCENT;
 
@@ -1162,6 +1162,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     function getBurnableBtokenAmount()
         public
         view
+        activePortalCheck
         returns (uint256 amountBurnable)
     {
         /// @dev Calculate the burn value of 1 full bToken in PSM
@@ -1169,7 +1170,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
 
         /// @dev Calculate and return the amount of bTokens burnable
-        amountBurnable = (fundingRewardPool * 1e18) / burnValueFullToken;
+        /// @dev Because of the 1 WEI above, this will slightly underestimate for safety
+        uint256 rewards = IERC20(PSM_ADDRESS).balanceOf(address(this));
+        amountBurnable = (rewards * 1e18) / burnValueFullToken;
     }
 
     /// @notice Users redeem bTokens for PSM tokens
@@ -1178,7 +1181,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev Burn the bTokens from the user's wallet
     /// @dev Transfer the PSM tokens to the user
     /// @param _amount The amount of bTokens to burn
-    function burnBtokens(uint256 _amount) external activePortalCheck {
+    function burnBtokens(uint256 _amount) external {
         /// @dev Check that the burn amount is not zero
         if (_amount == 0) {
             revert InvalidAmount();
@@ -1192,11 +1195,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Calculate how many PSM the user receives based on the burn amount
         uint256 amountToReceive = getBurnValuePSM(_amount);
-
-        /// @dev Check that there are enough PSM in the funding reward pool
-        if (amountToReceive > fundingRewardPool) {
-            revert InsufficientRewards();
-        }
 
         /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
         fundingRewardPool -= amountToReceive;
@@ -1225,7 +1223,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     }
 
     /// @notice Deploy the bToken of this Portal
-    /// @dev Must be called before Portal is activated
+    /// @dev This function deploys the bToken of this Portal with the Portal as owner
     /// @dev Must be called before Portal is activated
     /// @dev Can only be called once
     function create_bToken() external nonActivePortalCheck {
@@ -1248,13 +1246,13 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         );
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
-        bToken = new MintBurnToken(address(this), name, symbol);
+        bToken = new MintBurnToken(name, symbol);
 
         emit bTokenDeployed(address(bToken));
     }
 
     /// @notice Deploy the Portal Energy Token of this Portal
-    /// @dev This function deploys the PortalEnergyToken of this Portal and sets the Portal as owner
+    /// @dev This function deploys the PortalEnergyToken of this Portal with the Portal as owner
     /// @dev Must be called before Portal is activated
     /// @dev Can only be called once
     function create_portalEnergyToken() external nonActivePortalCheck {
@@ -1277,7 +1275,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         );
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
-        portalEnergyToken = new MintBurnToken(address(this), name, symbol);
+        portalEnergyToken = new MintBurnToken(name, symbol);
 
         emit PortalEnergyTokenDeployed(address(portalEnergyToken));
     }
@@ -1314,7 +1312,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 portalEnergyNetChange;
         uint256 portalEnergyAdjustment;
 
-        /// @dev Check the user´s account status based on lastUpdateTime
+        /// @dev Check the user account state based on lastUpdateTime
         /// @dev If this variable is 0, the user never staked and could not earn PE
         if (account.lastUpdateTime != 0) {
             /// @dev Calculate the Portal Energy earned since the last update
@@ -1403,14 +1401,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             revert InvalidAddress();
         }
 
-        /// =======================
-        /// THIS CHECK COULD BE REMOVED TO SAVE GAS
-        /// =======================
-        /// @dev Check that the caller has sufficient tokens to burn
-        if (portalEnergyToken.balanceOf(msg.sender) < _amount) {
-            revert InsufficientBalance();
-        }
-
         /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergyToken burned
         accounts[_recipient].portalEnergy += _amount;
 
@@ -1421,19 +1411,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         emit PortalEnergyBurned(msg.sender, _recipient, _amount);
     }
 
-    // ==============================
-    /// THIS FUNCTION COULD BE CONSOLIDATED WITH THE ABOVE - ADJUST forceUnstakeAll()
-    // ==============================
     /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of user equally
     /// @dev This function is private and can only be called internally
     /// @param _user The address whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {
-        /// @dev Check that the user has sufficient tokens to burn
-        if (portalEnergyToken.balanceOf(address(_user)) < _amount) {
-            revert InsufficientBalance();
-        }
-
         /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
         accounts[_user].portalEnergy += _amount;
 
@@ -1462,7 +1444,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             revert InvalidAddress();
         }
 
-        /// @dev Get the current status of the user´s stake
+        /// @dev Get the current state of the user stake
         (
             address user,
             ,

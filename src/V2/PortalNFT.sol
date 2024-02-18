@@ -88,8 +88,8 @@ contract PortalNFT is ERC721URIStorage {
     // Redeem Position NFT to receive internal Account in Portal
     // Can only be called by the owner (Portal)
     function redeem(
-        uint256 _tokenId,
-        address ownerOfNFT
+        address ownerOfNFT,
+        uint256 _tokenId
     ) external onlyOwner returns (uint256 stakedBalance, uint256 portalEnergy) {
         if (ownerOfNFT != _ownerOf(_tokenId)) {
             revert NotOwnerOfNFT();
