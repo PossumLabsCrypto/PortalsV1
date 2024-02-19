@@ -121,7 +121,7 @@ contract PortalV2 is ReentrancyGuard {
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
     bool public bTokenCreated; // flag for bToken deployment
     bool public portalEnergyTokenCreated; // flag for PE token deployment
-    bool public PortalNFTcreated; // flag for Portal NFT contract deployment
+    bool public portalNFTcreated; // flag for Portal NFT contract deployment
     uint256 private constant MAX_UINT =
         115792089237316195423570985008687907853269984665640564039457584007913129639935;
     address public constant WETH_ADDRESS =
@@ -495,12 +495,12 @@ contract PortalV2 is ReentrancyGuard {
     /// @dev Can only be called once
     function create_portalNFT() public nonActivePortalCheck {
         // Check if the NFT contract is already deployed
-        if (PortalNFTcreated) {
+        if (portalNFTcreated) {
             revert TokenExists();
         }
 
         /// @dev Update the token creation flag to prevent future calls
-        PortalNFTcreated = true;
+        portalNFTcreated = true;
 
         /// @dev Build the NFT contract with name and symbol based on the principal token of this Portal
         string memory name = concatenate(
@@ -581,8 +581,8 @@ contract PortalV2 is ReentrancyGuard {
 
         /// @dev Redeem the NFT and get the returned paramters
         (uint256 stakedBalanceNFT, uint256 portalEnergyNFT) = portalNFT.redeem(
-            _tokenId,
-            msg.sender
+            msg.sender,
+            _tokenId
         );
 
         /// @dev Update recipient Account
@@ -1027,7 +1027,7 @@ contract PortalV2 is ReentrancyGuard {
         if (!portalEnergyTokenCreated) {
             revert PEtokenNotDeployed();
         }
-        if (!PortalNFTcreated) {
+        if (!portalNFTcreated) {
             revert PortalNFTnotDeployed();
         }
 

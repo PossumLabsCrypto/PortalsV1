@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {PortalV2MultiAsset} from "src/V2MultiAsset/PortalV2MultiAsset.sol";
 import {MintBurnToken} from "./mocks/MockToken.sol";
 import {VirtualLP} from "./mocks/VirtualLP.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract PortalV2MultiAssetTest is Test {
     // External token addresses
@@ -22,15 +23,10 @@ contract PortalV2MultiAssetTest is Test {
     uint256 constant _TERMINAL_MAX_LOCK_DURATION = 157680000;
     uint256 private constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
     uint256 public maxLockDuration = 7776000; // 7776000 starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
-    uint256 private constant _TRADE_TIMELOCK = 60;
 
     // portal instances
-    PortalV2MultiAsset public portal_USDCE;
     PortalV2MultiAsset public portal_USDC;
     PortalV2MultiAsset public portal_WETH;
-    PortalV2MultiAsset public portal_ARB;
-    PortalV2MultiAsset public portal_WBTC;
-    PortalV2MultiAsset public portal_LINK;
 
     // Shared virtual LP
     VirtualLP public virtualLP;
@@ -40,49 +36,25 @@ contract PortalV2MultiAssetTest is Test {
 
     uint256 constant _TARGET_CONSTANT_USDC = 1101321585903080 * 1e18;
     uint256 constant _TARGET_CONSTANT_WETH = 423076988165 * 1e18;
-    uint256 constant _TARGET_CONSTANT_ARB = 500000000000000 * 1e18;
-    uint256 constant _TARGET_CONSTANT_WBTC = 25581396062 * 1e18;
-    uint256 constant _TARGET_CONSTANT_LINK = 61109753116597 * 1e18;
 
     uint256 constant _FUNDING_PHASE_DURATION = 604800; // 7 days
     uint256 constant _FUNDING_MIN_AMOUNT = 5e25;
 
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_USDCE =
-        0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8;
     address private constant _PRINCIPAL_TOKEN_ADDRESS_USDC =
         0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
     address private constant _PRINCIPAL_TOKEN_ADDRESS_WETH =
         0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_ARB =
-        0x912CE59144191C1204E64559FE8253a0e49E6548;
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_WBTC =
-        0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f;
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_LINK =
-        0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
 
-    address private constant USDCE_WATER =
-        0x806e8538FC05774Ea83d9428F778E423F6492475;
     address private constant USDC_WATER =
         0x9045ae36f963b7184861BDce205ea8B08913B48c;
     address private constant WETH_WATER =
         0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
-    address private constant ARB_WATER =
-        0x175995159ca4F833794C88f7873B3e7fB12Bb1b6;
-    address private constant WBTC_WATER =
-        0x4e9e41Bbf099fE0ef960017861d181a9aF6DDa07;
-    address private constant LINK_WATER =
-        0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
 
-    uint256 constant _POOL_ID_USDCE = 4;
     uint256 constant _POOL_ID_USDC = 5;
     uint256 constant _POOL_ID_WETH = 10;
-    uint256 constant _POOL_ID_ARB = 11;
-    uint256 constant _POOL_ID_WBTC = 12;
-    uint256 constant _POOL_ID_LINK = 16;
 
     uint256 constant _DECIMALS = 18;
     uint256 constant _DECIMALS_USDC = 6;
-    uint256 constant _DECIMALS_WBTC = 8;
 
     uint256 constant _AMOUNT_TO_CONVERT = 100000 * 1e18;
 
@@ -90,16 +62,12 @@ contract PortalV2MultiAssetTest is Test {
 
     // time
     uint256 timestamp;
-    uint256 timeAfterActivating;
+    uint256 fundingPhase;
 
     // prank addresses
     address Alice = address(0x01);
     address Bob = address(0x02);
     address Karen = address(0x03);
-
-    // tokens
-    MintBurnToken bToken = new MintBurnToken("BT", "BT");
-    MintBurnToken eToken = new MintBurnToken("ET", "ET");
 
     // ============================================
     // ==                EVENTS                  ==
@@ -216,18 +184,6 @@ contract PortalV2MultiAssetTest is Test {
         address _VIRTUAL_LP = address(virtualLP);
 
         // Create new Portals
-        portal_USDCE = new PortalV2MultiAsset(
-            _VIRTUAL_LP,
-            _TARGET_CONSTANT_USDC,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
-            _PRINCIPAL_TOKEN_ADDRESS_USDCE,
-            _VAULT_ADDRESS,
-            _POOL_ID_USDCE,
-            _DECIMALS_USDC,
-            _AMOUNT_TO_CONVERT,
-            _META_DATA_URI
-        );
         portal_USDC = new PortalV2MultiAsset(
             _VIRTUAL_LP,
             _TARGET_CONSTANT_USDC,
@@ -252,120 +208,259 @@ contract PortalV2MultiAssetTest is Test {
             _AMOUNT_TO_CONVERT,
             _META_DATA_URI
         );
-        portal_ARB = new PortalV2MultiAsset(
-            _VIRTUAL_LP,
-            _TARGET_CONSTANT_ARB,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
-            _PRINCIPAL_TOKEN_ADDRESS_ARB,
-            _VAULT_ADDRESS,
-            _POOL_ID_ARB,
-            _DECIMALS,
-            _AMOUNT_TO_CONVERT,
-            _META_DATA_URI
-        );
-        portal_WBTC = new PortalV2MultiAsset(
-            _VIRTUAL_LP,
-            _TARGET_CONSTANT_WBTC,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
-            _PRINCIPAL_TOKEN_ADDRESS_WBTC,
-            _VAULT_ADDRESS,
-            _POOL_ID_WBTC,
-            _DECIMALS_WBTC,
-            _AMOUNT_TO_CONVERT,
-            _META_DATA_URI
-        );
-        portal_LINK = new PortalV2MultiAsset(
-            _VIRTUAL_LP,
-            _TARGET_CONSTANT_USDC,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            _VAULT_ADDRESS,
-            _POOL_ID_USDC,
-            _DECIMALS_USDC,
-            _AMOUNT_TO_CONVERT,
-            _META_DATA_URI
-        );
 
         // creation time
         timestamp = block.timestamp;
-        timeAfterActivating = timestamp + _FUNDING_PHASE_DURATION;
+        fundingPhase = timestamp + _FUNDING_PHASE_DURATION;
+
+        // Deal tokens to addresses
+        deal(PSM_ADDRESS, Alice, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Alice, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_WETH, Alice, 1e30, true);
+
+        deal(PSM_ADDRESS, Bob, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Bob, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_WETH, Bob, 1e30, true);
+
+        deal(PSM_ADDRESS, Karen, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Karen, 1e30, true);
+        deal(_PRINCIPAL_TOKEN_ADDRESS_WETH, Karen, 1e30, true);
     }
 
+    // Multi-Portal LP interaction
+    //
+
     // -------------------- Funding phase:
-    // ----------- Negatives:
     // stake
+    function testRevert_stake() public {
+        vm.startPrank(Alice);
+        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.stake(123456);
+    }
 
     // getUpdateAccount
+    function testRevert_getUpdateAccount() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.getUpdateAccount(Alice, 0, true);
+    }
 
     // mintNFTposition
+    function testRevert_mintNFTposition() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.mintNFTposition(Alice);
+    }
 
     // quoteBuyPortalEnergy
+    function testRevert_quoteBuyPortalEnergy() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.quoteBuyPortalEnergy(123456);
+    }
 
     // quoteSellPortalEnergy
+    function testRevert_quoteSellPortalEnergy() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.quoteSellPortalEnergy(123456);
+    }
 
     // convert
+    function testRevert_convert() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(PortalNotActive.selector);
+        portal_USDC.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_WETH,
+            Alice,
+            123456,
+            fundingPhase + 60
+        );
+    }
 
-    // activate Portal before time passed
-    // activate Portal after time passed but before sufficient funding was provided
-    // activate Portal before bToken, PE token and NFT contract have been deployed
+    // create_bToken
+    // update parameters, create new contract
+    function testSuccess_create_bToken() public {
+        assertTrue(address(portal_USDC.bToken()) == address(0));
+        assertTrue(portal_USDC.bTokenCreated() == false);
 
-    // contributeFunding if amount is 0
-    // contributeFunding if bToken is not deployed
+        portal_USDC.create_bToken();
 
-    // withdrawFunding if amount is 0
-    // withdrawFunding if amount is larger than user balance
+        assertTrue(address(portal_USDC.bToken()) != address(0));
+        assertTrue(portal_USDC.bTokenCreated() == true);
+    }
 
+    // create_portalEnergyToken
+    // update parameters, create new contract
+    function testSuccess_create_portalEnergyToken() public {
+        assertTrue(address(portal_USDC.portalEnergyToken()) == address(0));
+        assertTrue(portal_USDC.portalEnergyTokenCreated() == false);
+
+        portal_USDC.create_portalEnergyToken();
+
+        assertTrue(address(portal_USDC.portalEnergyToken()) != address(0));
+        assertTrue(portal_USDC.portalEnergyTokenCreated() == true);
+    }
+
+    // create_portalNFT
+    // update parameters, create new contract
+    function testSuccess_create_portalNFT() public {
+        assertTrue(address(portal_USDC.portalNFT()) == address(0));
+        assertTrue(portal_USDC.portalNFTcreated() == false);
+
+        portal_USDC.create_portalNFT();
+
+        assertTrue(address(portal_USDC.portalNFT()) != address(0));
+        assertTrue(portal_USDC.portalNFTcreated() == true);
+    }
+
+    // activate Portal
+    // Funding phase has not passed
+    // Funding phase has passed but insufficient funding was provided
+    // bToken, PE token and NFT contract have not been deployed yet
+    function testRevert_activatePortal() public {
+        vm.expectRevert(FundingPhaseOngoing.selector);
+        portal_USDC.activatePortal();
+
+        // pass time
+        vm.warp(fundingPhase + 60);
+
+        vm.expectRevert(FundingInsufficient.selector);
+        portal_USDC.activatePortal();
+
+        // add funding
+        testSuccess_contributeFunding();
+
+        vm.expectRevert(bTokenNotDeployed.selector);
+        portal_USDC.activatePortal();
+
+        // deploy bToken
+        testSuccess_create_bToken();
+
+        vm.expectRevert(PEtokenNotDeployed.selector);
+        portal_USDC.activatePortal();
+
+        // deploy PE token
+        testSuccess_create_portalEnergyToken();
+
+        vm.expectRevert(PortalNFTnotDeployed.selector);
+        portal_USDC.activatePortal();
+    }
+
+    // contributeFunding
+    // amount is 0
+    // bToken is not deployed
+    function testRevert_contributeFunding() public {
+        vm.startPrank(Alice);
+        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
+
+        vm.expectRevert(InvalidAmount.selector);
+        portal_USDC.contributeFunding(0);
+
+        vm.expectRevert();
+        portal_USDC.contributeFunding(1e18);
+
+        vm.stopPrank();
+    }
+
+    // contributeFunding
+    // setup (create bToken)
+    // transfer PSM to Portal, mint bToken to user, check amount minted is correct
+    function testSuccess_contributeFunding() public {
+        // deploy bToken
+        testSuccess_create_bToken();
+
+        vm.startPrank(Alice);
+        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
+
+        portal_USDC.contributeFunding(1e22);
+        vm.stopPrank();
+
+        assertEq(IERC20(PSM_ADDRESS).balanceOf(address(portal_USDC)), 1e22);
+        assertEq(IERC20(PSM_ADDRESS).balanceOf(Alice), 1e30 - 1e22);
+        assertEq(
+            IERC20(address(portal_USDC.bToken())).balanceOf(Alice),
+            (1e22 * portal_USDC.FUNDING_MAX_RETURN_PERCENT()) / 100
+        );
+    }
+
+    // withdrawFunding
+    // setup (contribute)
+    // amount is 0
+    // amount larger than user balance
+    function testRevert_withdrawFunding() public {
+        testSuccess_contributeFunding();
+
+        vm.startPrank(Alice);
+        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
+
+        vm.expectRevert(InvalidAmount.selector);
+        portal_USDC.withdrawFunding(0);
+
+        vm.expectRevert();
+        portal_USDC.contributeFunding(1e23);
+
+        vm.stopPrank();
+    }
+
+    // withdrawFunding
+    // setup (contribute funding)
+    // transfer PSM to user, burn bTokens from user, check amount burned is correct
+    function testSuccess_withdrawFunding() public {
+        testSuccess_contributeFunding();
+
+        vm.startPrank(Alice);
+        IERC20(address(portal_USDC.bToken())).approve(
+            address(portal_USDC),
+            1e55
+        );
+        portal_USDC.withdrawFunding(1e20);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(PSM_ADDRESS).balanceOf(address(portal_USDC)),
+            1e22 - 1e20
+        );
+        assertEq(IERC20(PSM_ADDRESS).balanceOf(Alice), 1e30 - 1e22 + 1e20);
+        assertEq(
+            IERC20(address(portal_USDC.bToken())).balanceOf(Alice),
+            ((1e22 - 1e20) * portal_USDC.FUNDING_MAX_RETURN_PERCENT()) / 100
+        );
+    }
+
+    // activatePortal -> update parameters, send PSM to LP, emit event
+    // vm.warp(timeAfterActivating + 60);
+
+    // -------- REVERTS ---------
     // getBurnValuePSM
     // getBurnableBtokenAmount
-
     // create_bToken if token has been deployed
     // create_portalEnergyToken if token has been deployed
     // create_portalNFT if token has been deployed
-
-    // ----------- Positives:
-    // activatePortal -> update parameters, send PSM to LP, emit event
-
-    // contributeFunding -> transfer PSM to Portal, mint bToken to user, check amount minted is correct
-
-    // withdrawFunding -> transfer PSM to user, burn bTokens from user, check amount burned is correct
-
-    // create_bToken -> update parameters, create new contract
-
-    // create_portalEnergyToken -> update parameters, create new contract
-
-    // create_portalNFT -> update parameters, create new contract
 
     // ====================== Active Phase:
     // =========== Negatives:
     // activate Portal
     // contributeFunding
     // withdrawFunding
-
     // stake ERC20: amount 0
     // stake ERC20: send native ETH with call (msg.value) when principal is ERC20
     // stake ETH: amount > 0 + msg.value = 0
-
     // unstake: amount 0
     // unstake: amount > user available to withdraw
 
+    // mintPortalEnergyToken: amount 0
+    // mintPortalEnergyToken: recipient address(0)
+    // mintPortalEnergyToken: caller has not enough portal energy to mint amount
     // forceUnstakeAll: user did not give spending approval
     // forceUnstakeAll: user has more debt than PE tokens
-
-    // mintNFTposition: recipient = address(0)
-    // mintNFTposition: user with empty account (no PE & no stake)
-
-    // redeemNFTposition: try redeem an ID that does not exist
-    // redeemNFTposition: try redeem and ID that is not owned by the caller
 
     // buyPortalEnergy: amount 0
     // buyPortalEnergy: minReceived 0
     // buyPortalEnergy: recipient address(0)
     // buyPortalEnergy: deadline expired
     // buyPortalEnergy: received amount < minReceived
-
     // sellPortalEnergy: amount 0
     // sellPortalEnergy: minReceived 0
     // sellPortalEnergy: recipient address(0)
@@ -381,37 +476,31 @@ contract PortalV2MultiAssetTest is Test {
 
     // burnBtokens: amount 0
     // burnBtokens: amount greater than what can be redeemed
-
     // burnPortalEnergyToken: amount 0
     // burnPortalEnergyToken: recipient address(0)
 
-    // mintPortalEnergyToken: amount 0
-    // mintPortalEnergyToken: recipient address(0)
-    // mintPortalEnergyToken: caller has not enough portal energy to mint amount
+    // mintNFTposition: recipient = address(0)
+    // mintNFTposition: user with empty account (no PE & no stake)
+    // redeemNFTposition: try redeem an ID that does not exist
+    // redeemNFTposition: try redeem and ID that is not owned by the caller
 
     // =========== Positives:
     // stake ERC20 -> update stake of user + global, send tokens to external protocol
     // ---> change _depositToYieldSource for this test -> simple deposit
     // stake ETH -> update stake of user + global, send tokens to external protocol
     // ---> change _depositToYieldSource for this test -> simple deposit
-
     // unstake -> update stake of user + global, withdraw tokens from external protocol + send to user
     // ---> change _withdrawFromYieldSource for this test -> simple withdrawal with user as target
 
-    // forceUnstakeAll ERC20 only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
-
+    // burnPortalEnergyToken -> increase recipient portalEnergy, burn PE tokens from caller
+    // mintPortalEnergyToken -> reduce caller PE, mint PE tokens minus LP protection to recipient
     // quoteForceUnstakeAll -> return correct number
-
-    // mintNFTposition -> delete user account, mint NFT to recipient address, check that NFT data is correct
-
-    // redeemNFTposition -> burn NFT, update the user account and add NFT values
-
-    // buyPortalEnergy -> increase the PortalEnergy of recipient, transfer PSM from user to Portal
-
-    // sellPortalEnergy -> decrease the PortalEnergy of caller, transfer PSM from Portal to recipient
+    // forceUnstakeAll ERC20 only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
 
     // quoteBuyPortalEnergy -> return the correct number
     // quoteSellPortalEnergy -> return the correct number
+    // buyPortalEnergy -> increase the PortalEnergy of recipient, transfer PSM from user to Portal
+    // sellPortalEnergy -> decrease the PortalEnergy of caller, transfer PSM from Portal to recipient
 
     // convert -> three scenarios:
     // If rewards are blow max rewards -> split PSM between Portal & LP, update rewards parameter, send token to user
@@ -420,10 +509,7 @@ contract PortalV2MultiAssetTest is Test {
 
     // getBurnValuePSM -> return the correct number
     // getBurnableBtokenAmount -> return the correct number
-
     // burnBtokens -> reduce the fundingRewardPool, burn bTokens from user, transfer PSM from Portal to user
-
-    // burnPortalEnergyToken -> increase recipient portalEnergy, burn PE tokens from caller
-
-    // mintPortalEnergyToken -> reduce caller PE, mint PE tokens minus LP protection to recipient
+    // mintNFTposition -> delete user account, mint NFT to recipient address, check that NFT data is correct
+    // redeemNFTposition -> burn NFT, update the user account and add NFT values
 }
