@@ -187,25 +187,15 @@ contract PortalV2MultiAssetTest is Test {
         portal_USDC = new PortalV2MultiAsset(
             _VIRTUAL_LP,
             _TARGET_CONSTANT_USDC,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            _VAULT_ADDRESS,
-            _POOL_ID_USDC,
             _DECIMALS_USDC,
-            _AMOUNT_TO_CONVERT,
             _META_DATA_URI
         );
         portal_WETH = new PortalV2MultiAsset(
             _VIRTUAL_LP,
             _TARGET_CONSTANT_WETH,
-            _FUNDING_PHASE_DURATION,
-            _FUNDING_MIN_AMOUNT,
             _PRINCIPAL_TOKEN_ADDRESS_WETH,
-            _VAULT_ADDRESS,
-            _POOL_ID_WETH,
             _DECIMALS,
-            _AMOUNT_TO_CONVERT,
             _META_DATA_URI
         );
 

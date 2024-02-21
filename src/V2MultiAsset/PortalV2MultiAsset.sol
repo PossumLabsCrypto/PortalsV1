@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 pragma solidity =0.8.19;
 
+import {MintBurnToken} from "./MintBurnToken.sol";
+import {PortalNFT} from "./PortalNFT.sol";
+import {IVirtualLP} from "./interfaces/IVirtualLP.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import {MintBurnToken} from "./MintBurnToken.sol";
-import {PortalNFT} from "./PortalNFT.sol";
-import {IWater} from "./interfaces/IWater.sol";
-import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
-import {IDualStaking} from "./interfaces/IDualStaking.sol";
-import {IVirtualLP} from "./interfaces/IVirtualLP.sol";
 
 interface IWETH {
     function deposit() external payable;
@@ -21,30 +18,24 @@ interface IWETH {
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
-error bTokenNotDeployed();
-error DeadlineExpired();
-error DurationLocked();
-error DurationBelowCurrent();
-error EmptyAccount();
-error FailedToSendNativeToken();
-error FundingPhaseOngoing();
-error FundingInsufficient();
-error InsufficientBalance();
-error InsufficientRewards();
 error InsufficientReceived();
-error InsufficientStakeBalance();
-error InsufficientToWithdraw();
 error InvalidAddress();
 error InvalidAmount();
+error DeadlineExpired();
 error InvalidConstructor();
-error NativeTokenNotAllowed();
-error NoProfit();
-error PEtokenNotDeployed();
-error PortalNFTnotDeployed();
 error PortalNotActive();
 error PortalAlreadyActive();
-error TimeLockActive();
+error DurationBelowCurrent();
+error NativeTokenNotAllowed();
 error TokenExists();
+error EmptyAccount();
+error TimeLockActive();
+error FailedToSendNativeToken();
+error NoProfit();
+error InsufficientBalance();
+error DurationLocked();
+error InsufficientToWithdraw();
+error InsufficientStakeBalance();
 
 /// @title Portal Contract V2 with shared Virtual LP
 /// @author Possum Labs
@@ -66,13 +57,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     constructor(
         address _VIRTUAL_LP,
         uint256 _TARGET_CONSTANT,
-        uint256 _FUNDING_PHASE_DURATION,
-        uint256 _FUNDING_MIN_AMOUNT,
         address _PRINCIPAL_TOKEN_ADDRESS,
-        address _VAULT_ADDRESS,
-        uint256 _POOL_ID,
         uint256 _DECIMALS,
-        uint256 _AMOUNT_TO_CONVERT,
         string memory _META_DATA_URI
     ) {
         if (_VIRTUAL_LP == address(0)) {
@@ -81,25 +67,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         if (_TARGET_CONSTANT < 1e25) {
             revert InvalidConstructor();
         }
-        if (
-            _FUNDING_PHASE_DURATION < 259200 ||
-            _FUNDING_PHASE_DURATION > 2592000
-        ) {
-            revert InvalidConstructor();
-        }
-        if (_FUNDING_MIN_AMOUNT == 0) {
-            revert InvalidConstructor();
-        }
+
         if (_TARGET_CONSTANT == 0) {
             revert InvalidConstructor();
         }
-        if (_VAULT_ADDRESS == address(0)) {
-            revert InvalidConstructor();
-        }
         if (_DECIMALS == 0) {
-            revert InvalidConstructor();
-        }
-        if (_AMOUNT_TO_CONVERT == 0) {
             revert InvalidConstructor();
         }
         if (keccak256(bytes(_META_DATA_URI)) == keccak256(bytes(""))) {
@@ -108,13 +80,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         VIRTUAL_LP = _VIRTUAL_LP;
         TARGET_CONSTANT = _TARGET_CONSTANT;
-        FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
-        FUNDING_MIN_AMOUNT = _FUNDING_MIN_AMOUNT;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
-        VAULT_ADDRESS = payable(_VAULT_ADDRESS);
-        POOL_ID = _POOL_ID;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
-        AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         CREATION_TIME = block.timestamp;
         NFT_META_DATA = _META_DATA_URI;
         virtualLP = IVirtualLP(VIRTUAL_LP);
@@ -126,22 +93,16 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // general
-    MintBurnToken public bToken; // the receipt token for funding the Portal
+    address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+    address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
+    uint256 constant TERMINAL_MAX_LOCK_DURATION = 157680000; // terminal maximum lock duration of a user´s stake in seconds (5y)
+    uint256 constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
+
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
-    bool public bTokenCreated; // flag for bToken deployment
     bool public portalEnergyTokenCreated; // flag for PE token deployment
     bool public portalNFTcreated; // flag for Portal NFT contract deployment
-    uint256 private constant MAX_UINT =
-        115792089237316195423570985008687907853269984665640564039457584007913129639935;
-    address public constant WETH_ADDRESS =
-        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
-    address public constant PSM_ADDRESS =
-        0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
-    uint256 public constant TERMINAL_MAX_LOCK_DURATION = 157680000; // terminal maximum lock duration of a user´s stake in seconds (5y)
-    uint256 private constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
-    uint256 public immutable AMOUNT_TO_CONVERT; // fixed amount of PSM tokens required to withdraw yield in the contract
     uint256 public immutable CREATION_TIME; // time stamp of deployment
     string public NFT_META_DATA; // IPFS uri for Portal Position NFTs metadata
     uint256 public maxLockDuration = 7776000; // starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
@@ -151,33 +112,16 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // principal management related - External Integration
     address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
-    address payable public immutable VAULT_ADDRESS;
-    uint256 public immutable POOL_ID;
-
-    address private constant SINGLE_STAKING =
-        0x314223E2fA375F972E159002Eb72A96301E99e22;
-    address private constant DUAL_STAKING =
-        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
-    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     // bootstrapping related
     IVirtualLP public virtualLP;
     uint256 private immutable TARGET_CONSTANT; // The constantProduct with which the Portal will be activated
-    uint256 public immutable FUNDING_PHASE_DURATION; // seconds after deployment before Portal can be activated
-    uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
-    uint256 public constant FUNDING_APR = 36; // annual redemption value increase (APR) of bTokens
-    uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
-    uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
-
-    uint256 public fundingBalance; // sum of all PSM funding contributions
-    uint256 public fundingRewardPool; // amount of PSM available for redemption against bTokens
-    bool public isActivePortal; // Start with false, will be set to true when funding phase ends
+    bool public isActivePortal; // Will be set to true when funding phase ends
 
     // exchange related
-    uint256 public constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
     uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
-
     address public immutable VIRTUAL_LP; // Address of the collective, virtual LP
+    uint256 constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
 
     // staking related
     // contains information of user stake position
@@ -194,19 +138,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ==                EVENTS                  ==
     // ============================================
     // --- Events related to the funding phase ---
-    event bTokenDeployed(address bToken);
     event PortalEnergyTokenDeployed(address PortalEnergyToken);
     event PortalNFTdeployed(address PortalNFTcontract);
-
-    event FundingReceived(address indexed, uint256 amount);
-    event FundingWithdrawn(address indexed, uint256 amount);
     event PortalActivated(address indexed, uint256 fundingBalance);
-
-    event RewardsRedeemed(
-        address indexed,
-        uint256 amountBurned,
-        uint256 amountReceived
-    );
 
     // --- Events related to internal exchange PSM vs. portalEnergy ---
     event PortalEnergyBuyExecuted(
@@ -215,13 +149,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 amount
     );
     event PortalEnergySellExecuted(
-        address indexed caller,
-        address indexed recipient,
-        uint256 amount
-    );
-
-    event ConvertExecuted(
-        address indexed token,
         address indexed caller,
         address indexed recipient,
         uint256 amount
@@ -291,6 +218,113 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     // ==           STAKING & UNSTAKING          ==
     // ============================================
+    /// @notice Simulate updating a user stake position and return the values without updating the struct
+    /// @dev Returns the simulated up-to-date user stake information
+    /// @param _user The user whose stake position is to be updated
+    /// @param _amount The amount to add or subtract from the user's stake position
+    /// @param _isPositiveAmount True for staking (add), false for unstaking (subtract)
+    function getUpdateAccount(
+        address _user,
+        uint256 _amount,
+        bool _isPositiveAmount
+    )
+        public
+        view
+        activePortalCheck
+        returns (
+            address user,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        )
+    {
+        /// @dev Load user account into memory
+        PortalV2MultiAsset.Account memory account = PortalV2MultiAsset.accounts[
+            _user
+        ];
+
+        /// @dev initialize helper variables
+        uint256 portalEnergyEarned;
+        uint256 portalEnergyIncrease;
+        uint256 portalEnergyNetChange;
+        uint256 portalEnergyAdjustment;
+
+        /// @dev Check the user account state based on lastUpdateTime
+        /// @dev If this variable is 0, the user never staked and could not earn PE
+        if (account.lastUpdateTime != 0) {
+            /// @dev Calculate the Portal Energy earned since the last update
+            portalEnergyEarned = (account.stakedBalance *
+                (block.timestamp - account.lastUpdateTime) *
+                1e18);
+
+            /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
+            portalEnergyIncrease = (account.stakedBalance *
+                (PortalV2MultiAsset.maxLockDuration -
+                    account.lastMaxLockDuration) *
+                1e18);
+
+            /// @dev Summarize Portal Energy changes and divide by common denominator
+            portalEnergyNetChange =
+                (portalEnergyEarned + portalEnergyIncrease) /
+                (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+        }
+
+        /// @dev Calculate the adjustment of Portal Energy from balance change
+        portalEnergyAdjustment =
+            ((_amount * PortalV2MultiAsset.maxLockDuration) * 1e18) /
+            (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+
+        /// @dev Check that user has enough Portal Energy for unstaking
+        if (
+            !_isPositiveAmount &&
+            portalEnergyAdjustment >
+            (account.portalEnergy + portalEnergyNetChange)
+        ) {
+            revert InsufficientToWithdraw();
+        }
+
+        /// @dev Check that the Stake Balance is sufficient for unstaking
+        if (!_isPositiveAmount && _amount > account.stakedBalance) {
+            revert InsufficientStakeBalance();
+        }
+
+        /// @dev Set the last update time to the current timestamp
+        lastUpdateTime = block.timestamp;
+
+        /// @dev Get the updated last maxLockDuration
+        lastMaxLockDuration = PortalV2MultiAsset.maxLockDuration;
+
+        /// @dev Calculate the user's staked balance and consider stake or unstake
+        stakedBalance = _isPositiveAmount
+            ? account.stakedBalance + _amount
+            : account.stakedBalance - _amount;
+
+        /// @dev Update the user's max stake debt
+        maxStakeDebt =
+            (stakedBalance * PortalV2MultiAsset.maxLockDuration * 1e18) /
+            (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+
+        /// @dev Update the user's portalEnergy and account for stake or unstake
+        portalEnergy = _isPositiveAmount
+            ? account.portalEnergy +
+                portalEnergyNetChange +
+                portalEnergyAdjustment
+            : account.portalEnergy +
+                portalEnergyNetChange -
+                portalEnergyAdjustment;
+
+        /// @dev Update amount available to withdraw
+        availableToWithdraw = portalEnergy >= maxStakeDebt
+            ? stakedBalance
+            : (stakedBalance * portalEnergy) / maxStakeDebt;
+
+        /// @dev Set the user for the return values
+        user = _user;
+    }
+
     /// @notice Update user data to the current state
     /// @dev This function updates the user data to the current state
     /// @dev It takes memory inputs and stores them into the user account struct
@@ -379,7 +413,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         totalPrincipalStaked += _amount;
 
         /// @dev Deposit the principal into the yield source (external protocol)
-        _depositToYieldSource(_amount);
+        virtualLP.depositToYieldSource(PRINCIPAL_TOKEN_ADDRESS, _amount);
 
         /// @dev Emit event that the stake was successful
         emit PrincipalStaked(msg.sender, _amount);
@@ -417,7 +451,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         totalPrincipalStaked -= _amount;
 
         /// @dev Withdraw the assets from external Protocol and send to user
-        _withdrawFromYieldSource(msg.sender, _amount);
+        virtualLP.withdrawFromYieldSource(
+            PRINCIPAL_TOKEN_ADDRESS,
+            msg.sender,
+            _amount
+        );
 
         /// @dev Emit event that tokens have been unstaked
         emit PrincipalUnstaked(msg.sender, _amount);
@@ -469,7 +507,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         totalPrincipalStaked -= oldStakedBalance;
 
         /// @dev Withdraw the principal from the yield source (external Protocol)
-        _withdrawFromYieldSource(msg.sender, oldStakedBalance);
+        virtualLP.withdrawFromYieldSource(
+            PRINCIPAL_TOKEN_ADDRESS,
+            msg.sender,
+            oldStakedBalance
+        );
 
         /// @dev Emit event that tokens have been unstaked
         emit PrincipalUnstaked(msg.sender, oldStakedBalance);
@@ -604,170 +646,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     }
 
     // ============================================
-    // ==      PRINCIPAL & REWARD MANAGEMENT     ==
-    // ============================================
-    /// @notice Deposit principal into the yield source
-    /// @dev This function deposits principal tokens from the Portal into the external protocol
-    /// @dev Approve the amount of tokens to be transferred
-    /// @dev Transfer the tokens from the Portal to the external protocol via interface
-    function _depositToYieldSource(uint256 _amount) private {
-        /// @dev Check that timeLock is zero to protect from griefing attack
-        if (IWater(VAULT_ADDRESS).lockTime() > 0) {
-            revert TimeLockActive();
-        }
-
-        /// @dev Deposit Token into Vault to receive Shares (WATER)
-        // Approval of token spending is handled with separate function to save gas
-        uint256 depositShares = IWater(VAULT_ADDRESS).deposit(
-            _amount,
-            address(this)
-        );
-
-        /// @dev Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        /// @dev Approval of token spending is handled with separate function to save gas
-        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, depositShares);
-    }
-
-    /// @notice Withdraw principal from the yield source to the Portal
-    /// @dev This function withdraws principal tokens from the external protocol to the Portal
-    /// @dev It transfers the tokens from the external protocol to the Portal via interface
-    /// @param _amount The amount of tokens to withdraw
-    function _withdrawFromYieldSource(address _user, uint256 _amount) private {
-        /// @dev Calculate number of Vault Shares that equal the withdraw amount
-        uint256 withdrawShares = IWater(VAULT_ADDRESS).convertToShares(_amount);
-
-        /// @dev Get the withdrawable assets from burning Vault Shares (consider rounding)
-        uint256 withdrawAssets = IWater(VAULT_ADDRESS).convertToAssets(
-            withdrawShares
-        );
-
-        /// @dev Initialize helper variables for withdraw amount sanity check
-        uint256 balanceBefore;
-        uint256 balanceAfter;
-
-        /// @dev Withdraw Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, withdrawShares);
-
-        /// @dev Check if handling native ETH
-        if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            /// @dev Withdraw the staked ETH from Vault
-            balanceBefore = address(this).balance;
-            IWater(VAULT_ADDRESS).withdrawETH(withdrawAssets);
-            balanceAfter = address(this).balance;
-
-            /// @dev Sanity check on obtained amount from Vault
-            _amount = balanceAfter - balanceBefore;
-
-            /// @dev Transfer the obtained ETH to the user
-            (bool sent, ) = payable(_user).call{value: _amount}("");
-            if (!sent) {
-                revert FailedToSendNativeToken();
-            }
-        }
-
-        /// @dev Check if handling ERC20 token
-        if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
-            /// @dev Withdraw the staked assets from Vault
-            balanceBefore = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-                address(this)
-            );
-            IWater(VAULT_ADDRESS).withdraw(
-                withdrawAssets,
-                address(this),
-                address(this)
-            );
-            balanceAfter = IERC20(PRINCIPAL_TOKEN_ADDRESS).balanceOf(
-                address(this)
-            );
-
-            /// @dev Sanity check on obtained amount from Vault
-            _amount = balanceAfter - balanceBefore;
-
-            /// @dev Transfer the obtained assets to the user
-            IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransfer(_user, _amount);
-        }
-    }
-
-    /// @dev Claim pending esVKA and USDC rewards, restake esVKA
-    function claimRewards() external {
-        // Claim esVKA rewards from staking the asset
-        ISingleStaking(SINGLE_STAKING).deposit(POOL_ID, 0);
-
-        uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
-
-        // Stake esVKA
-        // Approval of token spending is handled with separate function to save gas
-        if (esVKABalance > 0) {
-            IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
-        }
-
-        // Claim esVKA and USDC from DualStaking, stake the esVKA reward and send USDC to contract
-        IDualStaking(DUAL_STAKING).compound();
-    }
-
-    /// @dev Get the surplus assets in the Vault excluding withdrawal fee for internal use
-    function _getProfitOfAssetVault()
-        private
-        view
-        returns (uint256 profitAsset, uint256 profitShares)
-    {
-        /// @dev Get the Vault shares owned by Portal
-        uint256 sharesOwned = ISingleStaking(SINGLE_STAKING).getUserAmount(
-            POOL_ID,
-            address(this)
-        );
-
-        /// @dev Calculate the shares to be reserved for user withdrawals
-        uint256 sharesDebt = IWater(VAULT_ADDRESS).convertToShares(
-            totalPrincipalStaked
-        );
-
-        /// @dev Calculate the surplus shares owned by the Portal
-        profitShares = (sharesOwned > sharesDebt)
-            ? sharesOwned - sharesDebt
-            : 0;
-
-        /// @dev Calculate the net profit in assets
-        profitAsset = IWater(VAULT_ADDRESS).convertToAssets(profitShares);
-    }
-
-    /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
-    /// @dev May underestimate the real reward slightly due to precision limit
-    function getProfitOfAssetVault()
-        external
-        view
-        returns (uint256 profitAsset)
-    {
-        (uint256 profit, ) = _getProfitOfAssetVault();
-
-        uint256 denominator = IWater(VAULT_ADDRESS).DENOMINATOR();
-        uint256 withdrawalFee = IWater(VAULT_ADDRESS).withdrawalFees();
-
-        profitAsset = (profit * (denominator - withdrawalFee)) / denominator;
-    }
-
-    /// @dev Withdraws the asset surplus from Vault to Portal
-    function collectProfitOfAssetVault() public {
-        (uint256 profit, uint256 shares) = _getProfitOfAssetVault();
-
-        /// @dev Check if there is profit to withdraw
-        if (profit == 0 || shares == 0) {
-            revert NoProfit();
-        }
-
-        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(POOL_ID, shares);
-
-        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
-        IWater(VAULT_ADDRESS).withdraw(profit, address(this), address(this));
-    }
-
-    /// @dev Get current USDC rewards pending from protocol fees
-    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
-        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
-    }
-
-    // ============================================
     // ==               VIRTUAL LP               ==
     // ============================================
     /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
@@ -821,8 +699,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Users sell portalEnergy into the Portal to receive PSM to a recipient address
     /// @dev This function allows users to sell portalEnergy to the contract to increase a recipient´s PSM
-    /// @dev Can only be called if the Portal is active (implied condition)
-    /// @dev Get the correct price from the quote function
+    /// @dev Can only be called if the Portal is active (implied condition via quote function)
+    /// @dev Get the output amount from the quote function
     /// @dev Reduce the portalEnergy balance of the caller by the amount of portalEnergy sold
     /// @dev Send PSM to the recipient
     /// @param _amountInput The amount of portalEnergy to sell
@@ -894,10 +772,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(
+            PortalV2MultiAsset.VIRTUAL_LP
+        );
 
         /// @dev Calculate the reserve of portalEnergy (output)
-        uint256 reserve1 = constantProduct / reserve0;
+        uint256 reserve1 = PortalV2MultiAsset.constantProduct / reserve0;
 
         /// @dev Reduce amount by the LP Protection Hurdle to prevent sandwich attacks
         _amountInput = (_amountInput * (1 - LP_PROTECTION_HURDLE)) / 100;
@@ -915,298 +795,18 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInput
     ) public view activePortalCheck returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(
+            PortalV2MultiAsset.VIRTUAL_LP
+        );
 
         /// @dev Calculate the reserve of portalEnergy (input)
         /// @dev Avoid zero value to prevent theoretical drainer attack by donating PSM before selling 1 PE
-        uint256 reserve1 = (reserve0 > constantProduct)
+        uint256 reserve1 = (reserve0 > PortalV2MultiAsset.constantProduct)
             ? 1
-            : constantProduct / reserve0;
+            : PortalV2MultiAsset.constantProduct / reserve0;
 
         /// @dev Calculate the amount of PSM tokens received based on the amount of portalEnergy sold
         amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
-    }
-
-    // ============================================
-    // ==              PSM CONVERTER             ==
-    // ============================================
-    /// @notice Handle the arbitrage conversion of tokens inside the contract for PSM tokens
-    /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
-    /// @dev Collect rewards for funders and reallocate reward overflow to the internal LP (indirect)
-    /// @dev Transfer the input (PSM) token from the caller to the contract
-    /// @dev Transfer the specified output token from the contract to the caller
-    /// @param _token The token to be obtained by the recipient
-    /// @param _minReceived The minimum amount of tokens received
-    function convert(
-        address _token,
-        address _recipient,
-        uint256 _minReceived,
-        uint256 _deadline
-    ) external nonReentrant activePortalCheck {
-        /// @dev Check the validity of token and recipient addresses
-        if (_token == PSM_ADDRESS || _recipient == address(0)) {
-            revert InvalidAddress();
-        }
-
-        /// @dev Prevent zero value
-        if (_minReceived == 0) {
-            revert InvalidAmount();
-        }
-
-        /// @dev Check that the deadline has not expired
-        if (_deadline < block.timestamp) {
-            revert DeadlineExpired();
-        }
-
-        /// @dev Get the contract balance of the specified token
-        uint256 contractBalance;
-        if (_token == address(0)) {
-            contractBalance = address(this).balance;
-        } else {
-            contractBalance = IERC20(_token).balanceOf(address(this));
-        }
-
-        /// @dev Check that enough output tokens are available for frontrun protection
-        if (contractBalance < _minReceived) {
-            revert InsufficientReceived();
-        }
-
-        /// @dev initialize helper variables
-        uint256 maxRewards = (bToken.totalSupply() *
-            FUNDING_MAX_RETURN_PERCENT) / 100;
-        uint256 PSMbalance = IERC20(PSM_ADDRESS).balanceOf(address(this));
-
-        /// @dev Check if all rewards are served, then transfer full input PSM to Virtual LP
-        if (PSMbalance == maxRewards) {
-            /// @dev Enforce that fundingRewardPool correctly tracks the rewards
-            fundingRewardPool = PSMbalance;
-
-            /// @dev transfer PSM to the LP
-            IERC20(PSM_ADDRESS).transferFrom(
-                msg.sender,
-                VIRTUAL_LP,
-                AMOUNT_TO_CONVERT
-            );
-        } else {
-            /// @dev Check for reward overflow and transfer overflow + input PSM to Virtual LP
-            /// @dev This prevents PSM from ever being stuck in the Portal
-            if (PSMbalance > maxRewards) {
-                uint256 overflow = PSMbalance - maxRewards;
-                fundingRewardPool = maxRewards;
-
-                /// @dev Transfer overflow and input PSM to Virtual LP
-                IERC20(PSM_ADDRESS).safeTransfer(VIRTUAL_LP, overflow);
-                IERC20(PSM_ADDRESS).transferFrom(
-                    msg.sender,
-                    VIRTUAL_LP,
-                    AMOUNT_TO_CONVERT
-                );
-            }
-
-            /// @dev Calculate new rewards if there is outstanding debt to funders
-            /// @dev Transfer the funding rewards to Portal and rest to Virtual LP
-            if (PSMbalance < maxRewards) {
-                uint256 newRewards = (AMOUNT_TO_CONVERT *
-                    FUNDING_REWARD_SHARE) / 100;
-                fundingRewardPool += newRewards;
-
-                IERC20(PSM_ADDRESS).transferFrom(
-                    msg.sender,
-                    address(this),
-                    newRewards
-                );
-                IERC20(PSM_ADDRESS).transferFrom(
-                    msg.sender,
-                    VIRTUAL_LP,
-                    AMOUNT_TO_CONVERT - newRewards
-                );
-            }
-        }
-
-        /// @dev Transfer the output token from the contract to the recipient
-        if (_token == address(0)) {
-            (bool sent, ) = payable(_recipient).call{value: contractBalance}(
-                ""
-            );
-            if (!sent) {
-                revert FailedToSendNativeToken();
-            }
-        } else {
-            IERC20(_token).safeTransfer(_recipient, contractBalance);
-        }
-
-        emit ConvertExecuted(_token, msg.sender, _recipient, contractBalance);
-    }
-
-    // ============================================
-    // ==                FUNDING                 ==
-    // ============================================
-    /// @notice End the funding phase and enable normal contract functionality
-    /// @dev This function activates the portal and initializes the internal LP
-    /// @dev Can only be called when the Portal is inactive
-    /// @dev Calculate the constant product K, which is used to initialize the internal LP
-    function activatePortal() external nonActivePortalCheck {
-        /// @dev Check that the funding phase is over and enough funding has been contributed
-        if (block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {
-            revert FundingPhaseOngoing();
-        }
-        if (fundingBalance < FUNDING_MIN_AMOUNT) {
-            revert FundingInsufficient();
-        }
-
-        /// @dev Check that the necessary child contracts have been deployed
-        if (!bTokenCreated) {
-            revert bTokenNotDeployed();
-        }
-        if (!portalEnergyTokenCreated) {
-            revert PEtokenNotDeployed();
-        }
-        if (!portalNFTcreated) {
-            revert PortalNFTnotDeployed();
-        }
-
-        /// @dev Activate the portal
-        isActivePortal = true;
-
-        /// @dev Set the constant product K, which is used for calculating the amount of assets in the LP
-        constantProduct = TARGET_CONSTANT;
-
-        /// @dev Transfer the fundingBalance to the Virtual LP
-        IERC20(PSM_ADDRESS).safeTransfer(VIRTUAL_LP, fundingBalance);
-
-        /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
-        emit PortalActivated(address(this), fundingBalance);
-    }
-
-    /// @notice Allow users to deposit PSM to provide the initial upfront yield
-    /// @dev This function allows users to deposit PSM tokens during the funding phase
-    /// @dev The bToken must have been deployed via the contract in advance
-    /// @dev Increase the fundingBalance tracker by the amount of PSM deposited
-    /// @dev Transfer the PSM tokens from the user to the contract
-    /// @dev Mint bTokens to the user
-    /// @param _amount The amount of PSM to deposit
-    function contributeFunding(uint256 _amount) external nonActivePortalCheck {
-        /// @dev Prevent zero amount transaction
-        if (_amount == 0) {
-            revert InvalidAmount();
-        }
-
-        /// @dev Calculate the amount of bTokens to be minted based on the maximum return
-        uint256 mintableAmount = (_amount * FUNDING_MAX_RETURN_PERCENT) / 100;
-
-        /// @dev Increase the funding tracker balance by the amount of PSM deposited
-        fundingBalance += _amount;
-
-        /// @dev Transfer the PSM tokens from the user to the contract
-        IERC20(PSM_ADDRESS).transferFrom(msg.sender, address(this), _amount);
-
-        /// @dev Mint bTokens to the user
-        bToken.mint(msg.sender, mintableAmount);
-
-        /// @dev Emit the FundingReceived event with the user's address and the mintable amount
-        emit FundingReceived(msg.sender, mintableAmount);
-    }
-
-    /// @notice Allow users to burn bTokens to recover PSM funding before the Portal is activated
-    /// @dev This function allows users to withdraw PSM tokens during the funding phase of the contract
-    /// @dev The bToken must have been deployed via the contract in advance
-    /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
-    /// @dev Burn the appropriate amount of bTokens from the caller
-    /// @dev Transfer the PSM tokens from the contract to the caller
-    /// @param _amount The amount of bTokens burned to withdraw PSM
-    function withdrawFunding(uint256 _amount) external nonActivePortalCheck {
-        /// @dev Prevent zero amount transaction
-        if (_amount == 0) {
-            revert InvalidAmount();
-        }
-
-        /// @dev Calculate the amount of PSM returned to the user
-        uint256 withdrawAmount = (_amount * 100) / FUNDING_MAX_RETURN_PERCENT;
-
-        /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
-        fundingBalance -= withdrawAmount;
-
-        /// @dev Transfer the PSM tokens from the contract to the user
-        IERC20(PSM_ADDRESS).transfer(msg.sender, withdrawAmount);
-
-        /// @dev Burn bTokens from the user
-        bToken.burnFrom(msg.sender, _amount);
-
-        /// @dev Emit the FundingReceived event with the user's address and the mintable amount
-        emit FundingWithdrawn(msg.sender, withdrawAmount);
-    }
-
-    /// @notice Calculate the current burn value of bTokens
-    /// @param _amount The amount of bTokens to burn
-    /// @return burnValue The amount of PSM received when redeeming bTokens
-    function getBurnValuePSM(
-        uint256 _amount
-    ) public view activePortalCheck returns (uint256 burnValue) {
-        /// @dev Calculate the minimum burn value
-        uint256 minValue = (_amount * 100) / FUNDING_MAX_RETURN_PERCENT;
-
-        /// @dev Calculate the time based burn value
-        uint256 accruedValue = (_amount *
-            (block.timestamp - CREATION_TIME) *
-            FUNDING_APR) / (100 * SECONDS_PER_YEAR);
-
-        uint256 maxValue = (_amount * FUNDING_MAX_RETURN_PERCENT) / 100;
-        uint256 currentValue = minValue + accruedValue;
-
-        burnValue = (currentValue < maxValue) ? currentValue : maxValue;
-    }
-
-    /// @notice Get the amount of bTokens that can be burned against the reward Pool
-    /// @dev Calculate how many bTokens can be burned to redeem the full reward Pool
-    /// @return amountBurnable The amount of bTokens that can be redeemed for rewards
-    function getBurnableBtokenAmount()
-        public
-        view
-        activePortalCheck
-        returns (uint256 amountBurnable)
-    {
-        /// @dev Calculate the burn value of 1 full bToken in PSM
-        /// @dev Add 1 WEI to handle potential rounding issue in the next step
-        uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
-
-        /// @dev Calculate and return the amount of bTokens burnable
-        /// @dev Because of the 1 WEI above, this will slightly underestimate for safety
-        uint256 rewards = IERC20(PSM_ADDRESS).balanceOf(address(this));
-        amountBurnable = (rewards * 1e18) / burnValueFullToken;
-    }
-
-    /// @notice Users redeem bTokens for PSM tokens
-    /// @dev This function allows users to burn bTokens to receive PSM when the Portal is active
-    /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
-    /// @dev Burn the bTokens from the user's wallet
-    /// @dev Transfer the PSM tokens to the user
-    /// @param _amount The amount of bTokens to burn
-    function burnBtokens(uint256 _amount) external {
-        /// @dev Check that the burn amount is not zero
-        if (_amount == 0) {
-            revert InvalidAmount();
-        }
-
-        /// @dev Check that the burn amount is not larger than what can be redeemed
-        uint256 burnable = getBurnableBtokenAmount();
-        if (_amount > burnable) {
-            revert InvalidAmount();
-        }
-
-        /// @dev Calculate how many PSM the user receives based on the burn amount
-        uint256 amountToReceive = getBurnValuePSM(_amount);
-
-        /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
-        fundingRewardPool -= amountToReceive;
-
-        /// @dev Burn the bTokens from the user's balance
-        bToken.burnFrom(msg.sender, _amount);
-
-        /// @dev Transfer the PSM to the user
-        IERC20(PSM_ADDRESS).transfer(msg.sender, amountToReceive);
-
-        /// @dev Event that informs about burn amount and received PSM by the caller
-        emit RewardsRedeemed(msg.sender, _amount, amountToReceive);
     }
 
     // ============================================
@@ -1220,35 +820,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         string memory b
     ) internal pure returns (string memory) {
         return string(abi.encodePacked(a, b));
-    }
-
-    /// @notice Deploy the bToken of this Portal
-    /// @dev This function deploys the bToken of this Portal with the Portal as owner
-    /// @dev Must be called before Portal is activated
-    /// @dev Can only be called once
-    function create_bToken() external nonActivePortalCheck {
-        if (bTokenCreated) {
-            revert TokenExists();
-        }
-
-        /// @dev Update the token creation flag to prevent future calls.
-        bTokenCreated = true;
-
-        /// @dev Build the token name and symbol based on the principal token of this Portal.
-        string memory name = concatenate(
-            "b",
-            ERC20(PRINCIPAL_TOKEN_ADDRESS).name()
-        );
-
-        string memory symbol = concatenate(
-            "b",
-            ERC20(PRINCIPAL_TOKEN_ADDRESS).symbol()
-        );
-
-        /// @dev Deploy the token and update the related storage variable so that other functions can work.
-        bToken = new MintBurnToken(name, symbol);
-
-        emit bTokenDeployed(address(bToken));
     }
 
     /// @notice Deploy the Portal Energy Token of this Portal
@@ -1278,110 +849,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         portalEnergyToken = new MintBurnToken(name, symbol);
 
         emit PortalEnergyTokenDeployed(address(portalEnergyToken));
-    }
-
-    /// @notice Simulate updating a user stake position and return the values without updating the struct
-    /// @dev Returns the simulated up-to-date user stake information
-    /// @param _user The user whose stake position is to be updated
-    /// @param _amount The amount to add or subtract from the user's stake position
-    /// @param _isPositiveAmount True for staking (add), false for unstaking (subtract)
-    function getUpdateAccount(
-        address _user,
-        uint256 _amount,
-        bool _isPositiveAmount
-    )
-        public
-        view
-        activePortalCheck
-        returns (
-            address user,
-            uint256 lastUpdateTime,
-            uint256 lastMaxLockDuration,
-            uint256 stakedBalance,
-            uint256 maxStakeDebt,
-            uint256 portalEnergy,
-            uint256 availableToWithdraw
-        )
-    {
-        /// @dev Load user account into memory
-        Account memory account = accounts[_user];
-
-        /// @dev initialize helper variables
-        uint256 portalEnergyEarned;
-        uint256 portalEnergyIncrease;
-        uint256 portalEnergyNetChange;
-        uint256 portalEnergyAdjustment;
-
-        /// @dev Check the user account state based on lastUpdateTime
-        /// @dev If this variable is 0, the user never staked and could not earn PE
-        if (account.lastUpdateTime != 0) {
-            /// @dev Calculate the Portal Energy earned since the last update
-            portalEnergyEarned = (account.stakedBalance *
-                (block.timestamp - account.lastUpdateTime) *
-                1e18);
-
-            /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
-            portalEnergyIncrease = (account.stakedBalance *
-                (maxLockDuration - account.lastMaxLockDuration) *
-                1e18);
-
-            /// @dev Summarize Portal Energy changes and divide by common denominator
-            portalEnergyNetChange =
-                (portalEnergyEarned + portalEnergyIncrease) /
-                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-        }
-
-        /// @dev Calculate the adjustment of Portal Energy from balance change
-        portalEnergyAdjustment =
-            ((_amount * maxLockDuration) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Check that user has enough Portal Energy for unstaking
-        if (
-            !_isPositiveAmount &&
-            portalEnergyAdjustment >
-            (account.portalEnergy + portalEnergyNetChange)
-        ) {
-            revert InsufficientToWithdraw();
-        }
-
-        /// @dev Check that the Stake Balance is sufficient for unstaking
-        if (!_isPositiveAmount && _amount > account.stakedBalance) {
-            revert InsufficientStakeBalance();
-        }
-
-        /// @dev Set the last update time to the current timestamp
-        lastUpdateTime = block.timestamp;
-
-        /// @dev Get the updated last maxLockDuration
-        lastMaxLockDuration = maxLockDuration;
-
-        /// @dev Calculate the user's staked balance and consider stake or unstake
-        stakedBalance = _isPositiveAmount
-            ? account.stakedBalance + _amount
-            : account.stakedBalance - _amount;
-
-        /// @dev Update the user's max stake debt
-        maxStakeDebt =
-            (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Update the user's portalEnergy and account for stake or unstake
-        portalEnergy = _isPositiveAmount
-            ? account.portalEnergy +
-                portalEnergyNetChange +
-                portalEnergyAdjustment
-            : account.portalEnergy +
-                portalEnergyNetChange -
-                portalEnergyAdjustment;
-
-        /// @dev Update amount available to withdraw
-        availableToWithdraw = portalEnergy >= maxStakeDebt
-            ? stakedBalance
-            : (stakedBalance * portalEnergy) / maxStakeDebt;
-
-        /// @dev Set the user for the return values
-        user = _user;
     }
 
     /// @notice Users can burn their PortalEnergyTokens to increase portalEnergy of a recipient
@@ -1500,38 +967,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         emit MaxLockDurationUpdated(maxLockDuration);
-    }
-
-    function getVaultLockTime() public view returns (uint256 lockTime) {
-        lockTime = IWater(VAULT_ADDRESS).lockTime();
-    }
-
-    // Increase the token spending allowance of Assets by the associated Vault (WATER)
-    function increaseAllowanceVault() public {
-        // Allow spending of Assets by the associated Vault
-        address tokenAdr = (PRINCIPAL_TOKEN_ADDRESS == address(0))
-            ? WETH_ADDRESS
-            : PRINCIPAL_TOKEN_ADDRESS;
-        IERC20(tokenAdr).safeIncreaseAllowance(VAULT_ADDRESS, MAX_UINT);
-    }
-
-    // Increase the token spending allowance of Vault Shares by the Single Staking contract
-    function increaseAllowanceSingleStaking() public {
-        // Allow spending of Vault shares of an asset by the single staking contract
-        IERC20(VAULT_ADDRESS).safeIncreaseAllowance(SINGLE_STAKING, MAX_UINT);
-    }
-
-    // Increase the token spending allowance of esVKA by the Dual Staking contract
-    function increaseAllowanceDualStaking() public {
-        // Allow spending of esVKA by the Dual Staking contract
-        IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, MAX_UINT);
-    }
-
-    function updateBoostMultiplier() public {
-        ISingleStaking(SINGLE_STAKING).updateBoostMultiplier(
-            address(this),
-            POOL_ID
-        );
     }
 
     receive() external payable {}
