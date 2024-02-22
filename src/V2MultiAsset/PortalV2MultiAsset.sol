@@ -18,19 +18,19 @@ interface IWETH {
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
-error InsufficientReceived();
-error InvalidAddress();
-error InvalidAmount();
 error DeadlineExpired();
-error InvalidConstructor();
+error DurationLocked();
 error DurationTooLow();
-error NativeTokenNotAllowed();
-error TokenExists();
 error EmptyAccount();
 error InsufficientBalance();
-error DurationLocked();
-error InsufficientToWithdraw();
+error InsufficientReceived();
 error InsufficientStakeBalance();
+error InsufficientToWithdraw();
+error InvalidAddress();
+error InvalidAmount();
+error InvalidConstructor();
+error NativeTokenNotAllowed();
+error TokenExists();
 
 /// @title Portal Contract V2 with shared Virtual LP
 /// @author Possum Labs
@@ -51,7 +51,7 @@ error InsufficientStakeBalance();
 contract PortalV2MultiAsset is ReentrancyGuard {
     constructor(
         address _VIRTUAL_LP,
-        uint256 _TARGET_CONSTANT,
+        uint256 _CONSTANT_PRODUCT,
         address _PRINCIPAL_TOKEN_ADDRESS,
         uint256 _DECIMALS,
         string memory _META_DATA_URI
@@ -59,7 +59,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         if (_VIRTUAL_LP == address(0)) {
             revert InvalidConstructor();
         }
-        if (_TARGET_CONSTANT < 1e25) {
+        if (_CONSTANT_PRODUCT < 1e25) {
             revert InvalidConstructor();
         }
         if (_DECIMALS == 0) {
@@ -70,7 +70,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         VIRTUAL_LP = _VIRTUAL_LP;
-        CONSTANT_PRODUCT = _TARGET_CONSTANT;
+        CONSTANT_PRODUCT = _CONSTANT_PRODUCT;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
         NFT_META_DATA = _META_DATA_URI;
@@ -717,7 +717,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
-    /// @dev Can only be called if the Portal is active
     /// @dev Update the token reserves to get the exchange price
     /// @return amountReceived The amount of portalEnergy received by the recipient
     function quoteBuyPortalEnergy(
@@ -738,7 +737,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
-    /// @dev Can only be called if the Portal is active
     /// @dev Update the token reserves to get the exchange price
     /// @return amountReceived The amount of PSM tokens received by the recipient
     function quoteSellPortalEnergy(
