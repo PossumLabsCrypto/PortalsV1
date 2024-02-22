@@ -23,15 +23,10 @@ error InvalidAddress();
 error InvalidAmount();
 error DeadlineExpired();
 error InvalidConstructor();
-error PortalNotActive();
-error PortalAlreadyActive();
-error DurationBelowCurrent();
+error DurationTooLow();
 error NativeTokenNotAllowed();
 error TokenExists();
 error EmptyAccount();
-error TimeLockActive();
-error FailedToSendNativeToken();
-error NoProfit();
 error InsufficientBalance();
 error DurationLocked();
 error InsufficientToWithdraw();
@@ -67,10 +62,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         if (_TARGET_CONSTANT < 1e25) {
             revert InvalidConstructor();
         }
-
-        if (_TARGET_CONSTANT == 0) {
-            revert InvalidConstructor();
-        }
         if (_DECIMALS == 0) {
             revert InvalidConstructor();
         }
@@ -79,11 +70,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         VIRTUAL_LP = _VIRTUAL_LP;
-        TARGET_CONSTANT = _TARGET_CONSTANT;
+        CONSTANT_PRODUCT = _TARGET_CONSTANT;
         PRINCIPAL_TOKEN_ADDRESS = _PRINCIPAL_TOKEN_ADDRESS;
         DECIMALS_ADJUSTMENT = 10 ** _DECIMALS;
-        CREATION_TIME = block.timestamp;
         NFT_META_DATA = _META_DATA_URI;
+        CREATION_TIME = block.timestamp;
         virtualLP = IVirtualLP(VIRTUAL_LP);
     }
 
@@ -97,34 +88,27 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
     uint256 constant TERMINAL_MAX_LOCK_DURATION = 157680000; // terminal maximum lock duration of a user´s stake in seconds (5y)
     uint256 constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
+    uint256 immutable CREATION_TIME; // time stamp of deployment
+    uint256 immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
 
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
     bool public portalEnergyTokenCreated; // flag for PE token deployment
     bool public portalNFTcreated; // flag for Portal NFT contract deployment
 
-    uint256 public immutable CREATION_TIME; // time stamp of deployment
+    address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     string public NFT_META_DATA; // IPFS uri for Portal Position NFTs metadata
     uint256 public maxLockDuration = 7776000; // starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
     uint256 public totalPrincipalStaked; // returns how much principal is staked by all users combined
-    bool private lockDurationUpdateable = true; // flag to signal if the lock duration can still be updated
-
-    // principal management related - External Integration
-    address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
-    uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
-
-    // bootstrapping related
-    IVirtualLP public virtualLP;
-    uint256 private immutable TARGET_CONSTANT; // The constantProduct with which the Portal will be activated
-    bool public isActivePortal; // Will be set to true when funding phase ends
+    bool public lockDurationUpdateable = true; // flag to signal if the lock duration can still be updated
 
     // exchange related
-    uint256 public constantProduct; // the K constant of the (x*y = K) constant product formula
+    IVirtualLP private virtualLP;
+    uint256 public immutable CONSTANT_PRODUCT; // The constantProduct with which the Portal will be activated
     address public immutable VIRTUAL_LP; // Address of the collective, virtual LP
-    uint256 constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
+    uint256 public constant LP_PROTECTION_HURDLE = 1; // percent reduction of output amount when minting or buying PE
 
     // staking related
-    // contains information of user stake position
     struct Account {
         uint256 lastUpdateTime;
         uint256 lastMaxLockDuration;
@@ -137,11 +121,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     // ==                EVENTS                  ==
     // ============================================
-    // --- Events related to the funding phase ---
-    event PortalEnergyTokenDeployed(address PortalEnergyToken);
-    event PortalNFTdeployed(address PortalNFTcontract);
-    event PortalActivated(address indexed, uint256 fundingBalance);
-
     // --- Events related to internal exchange PSM vs. portalEnergy ---
     event PortalEnergyBuyExecuted(
         address indexed caller,
@@ -181,11 +160,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // --- Events related to staking & unstaking ---
     event PrincipalStaked(address indexed user, uint256 amountStaked);
     event PrincipalUnstaked(address indexed user, uint256 amountUnstaked);
-    event RewardsClaimed(
-        address[] indexed pools,
-        address[][] rewarders,
-        uint256 timeStamp
-    );
 
     event StakePositionUpdated(
         address indexed user,
@@ -197,23 +171,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     );
 
     event MaxLockDurationUpdated(uint256 newDuration);
-
-    // ============================================
-    // ==               MODIFIERS                ==
-    // ============================================
-    modifier activePortalCheck() {
-        if (!isActivePortal) {
-            revert PortalNotActive();
-        }
-        _;
-    }
-
-    modifier nonActivePortalCheck() {
-        if (isActivePortal) {
-            revert PortalAlreadyActive();
-        }
-        _;
-    }
 
     // ============================================
     // ==           STAKING & UNSTAKING          ==
@@ -230,7 +187,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     )
         public
         view
-        activePortalCheck
         returns (
             address user,
             uint256 lastUpdateTime,
@@ -242,9 +198,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         )
     {
         /// @dev Load user account into memory
-        PortalV2MultiAsset.Account memory account = PortalV2MultiAsset.accounts[
-            _user
-        ];
+        Account memory account = accounts[_user];
 
         /// @dev initialize helper variables
         uint256 portalEnergyEarned;
@@ -262,20 +216,19 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
             /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
             portalEnergyIncrease = (account.stakedBalance *
-                (PortalV2MultiAsset.maxLockDuration -
-                    account.lastMaxLockDuration) *
+                (maxLockDuration - account.lastMaxLockDuration) *
                 1e18);
 
             /// @dev Summarize Portal Energy changes and divide by common denominator
             portalEnergyNetChange =
                 (portalEnergyEarned + portalEnergyIncrease) /
-                (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         }
 
         /// @dev Calculate the adjustment of Portal Energy from balance change
         portalEnergyAdjustment =
-            ((_amount * PortalV2MultiAsset.maxLockDuration) * 1e18) /
-            (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+            ((_amount * maxLockDuration) * 1e18) /
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Check that user has enough Portal Energy for unstaking
         if (
@@ -295,7 +248,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         lastUpdateTime = block.timestamp;
 
         /// @dev Get the updated last maxLockDuration
-        lastMaxLockDuration = PortalV2MultiAsset.maxLockDuration;
+        lastMaxLockDuration = maxLockDuration;
 
         /// @dev Calculate the user's staked balance and consider stake or unstake
         stakedBalance = _isPositiveAmount
@@ -304,8 +257,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Update the user's max stake debt
         maxStakeDebt =
-            (stakedBalance * PortalV2MultiAsset.maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * PortalV2MultiAsset.DECIMALS_ADJUSTMENT);
+            (stakedBalance * maxLockDuration * 1e18) /
+            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the user's portalEnergy and account for stake or unstake
         portalEnergy = _isPositiveAmount
@@ -360,32 +313,32 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @notice Stake the principal token into the Portal & redirect principal to yield source
     /// @dev This function allows users to stake their principal tokens into the Portal
     /// @dev Can only be called if Portal is active
+    /// @dev Does not follow CEI pattern for optimisation reasons. The handled tokens are trusted.
     /// @dev Update the user´s account
     /// @dev Update the global tracker of staked principal
     /// @dev Deposit the principal into the yield source (external protocol)
     /// @param _amount The amount of tokens to stake
-    function stake(
-        uint256 _amount
-    ) external payable nonReentrant activePortalCheck {
-        /// @dev Convert native ETH to WETH for contract
+    function stake(uint256 _amount) external payable nonReentrant {
+        /// @dev Convert native ETH to WETH for contract, then send to LP
         /// @dev This section must sit before using _amount elsewhere to guarantee consistency
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
             // Wrap ETH into WETH
             _amount = msg.value;
             IWETH(WETH_ADDRESS).deposit{value: _amount}();
-        }
 
-        /// @dev If not native ETH, transfer ERC20 token to contract
-        if (PRINCIPAL_TOKEN_ADDRESS != address(0)) {
+            /// @dev Send WETH to virtual LP
+            IERC20(WETH_ADDRESS).transfer(VIRTUAL_LP, _amount);
+        } else {
+            /// @dev If not native ETH, transfer principal token to contract
             /// @dev Prevent contract from receiving ETH when principal is ERC20
             if (msg.value > 0) {
                 revert NativeTokenNotAllowed();
             }
 
-            /// @dev Transfer token from user to contract
+            /// @dev Transfer token from user to virtual LP
             IERC20(PRINCIPAL_TOKEN_ADDRESS).safeTransferFrom(
                 msg.sender,
-                address(this),
+                VIRTUAL_LP,
                 _amount
             );
         }
@@ -481,6 +434,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         ) = getUpdateAccount(msg.sender, 0, false);
 
+        /// @dev Check if the user has a stake
+        if (stakedBalance == 0) {
+            revert EmptyAccount();
+        }
+
         /// @dev Calculate how many portalEnergyToken must be burned to unstake all
         if (portalEnergy < maxStakeDebt) {
             uint256 remainingDebt = maxStakeDebt - portalEnergy;
@@ -546,9 +504,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     /// @notice This function deploys the NFT contract unique to this Portal
     /// @dev Deploy an NFT contract with name and symbol related to the principal token
-    /// @dev Must be called before Portal is activated (implied condition)
     /// @dev Can only be called once
-    function create_portalNFT() public {
+    function create_portalNFT() external {
         // Check if the NFT contract is already deployed
         if (portalNFTcreated) {
             revert TokenExists();
@@ -575,15 +532,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             symbol,
             NFT_META_DATA
         );
-
-        /// @dev Emit event that the NFT contract was deployed
-        emit PortalNFTdeployed(address(portalNFT));
     }
 
     /// @notice This function allows users to store their Account in a transferrable NFT
     /// @dev Mint a Portal NFT with the vital information of caller account to a recipient
     /// @dev Delete the caller account
-    function mintNFTposition(address _recipient) public {
+    function mintNFTposition(address _recipient) external {
         /// @dev Check that the recipient is a valid address
         if (_recipient == address(0)) {
             revert InvalidAddress();
@@ -618,7 +572,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev Update the user account to current state. Required because stake balance can change.
     /// @dev Burn the NFT and retrieve its balances (stake balance & portalEnergy)
     /// @dev Add the NFT values to the account of the user
-    function redeemNFTposition(uint256 _tokenId) public {
+    function redeemNFTposition(uint256 _tokenId) external {
         /// @dev Get the current state of the user Account
         (
             ,
@@ -650,7 +604,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     /// @notice Users sell PSM into the Portal to top up portalEnergy balance of a recipient
     /// @dev This function allows users to sell PSM tokens to the contract to increase a recipient´s portalEnergy
-    /// @dev Can only be called if the Portal is active (implied condition)
     /// @dev Get the correct price from the quote function
     /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
     /// @dev Transfer the PSM tokens from the caller to the contract
@@ -699,7 +652,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Users sell portalEnergy into the Portal to receive PSM to a recipient address
     /// @dev This function allows users to sell portalEnergy to the contract to increase a recipient´s PSM
-    /// @dev Can only be called if the Portal is active (implied condition via quote function)
     /// @dev Get the output amount from the quote function
     /// @dev Reduce the portalEnergy balance of the caller by the amount of portalEnergy sold
     /// @dev Send PSM to the recipient
@@ -770,14 +722,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @return amountReceived The amount of portalEnergy received by the recipient
     function quoteBuyPortalEnergy(
         uint256 _amountInput
-    ) public view activePortalCheck returns (uint256 amountReceived) {
+    ) public view returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(
-            PortalV2MultiAsset.VIRTUAL_LP
-        );
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
 
         /// @dev Calculate the reserve of portalEnergy (output)
-        uint256 reserve1 = PortalV2MultiAsset.constantProduct / reserve0;
+        uint256 reserve1 = CONSTANT_PRODUCT / reserve0;
 
         /// @dev Reduce amount by the LP Protection Hurdle to prevent sandwich attacks
         _amountInput = (_amountInput * (1 - LP_PROTECTION_HURDLE)) / 100;
@@ -793,17 +743,15 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @return amountReceived The amount of PSM tokens received by the recipient
     function quoteSellPortalEnergy(
         uint256 _amountInput
-    ) public view activePortalCheck returns (uint256 amountReceived) {
+    ) public view returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(
-            PortalV2MultiAsset.VIRTUAL_LP
-        );
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
 
         /// @dev Calculate the reserve of portalEnergy (input)
         /// @dev Avoid zero value to prevent theoretical drainer attack by donating PSM before selling 1 PE
-        uint256 reserve1 = (reserve0 > PortalV2MultiAsset.constantProduct)
+        uint256 reserve1 = (reserve0 > CONSTANT_PRODUCT)
             ? 1
-            : PortalV2MultiAsset.constantProduct / reserve0;
+            : CONSTANT_PRODUCT / reserve0;
 
         /// @dev Calculate the amount of PSM tokens received based on the amount of portalEnergy sold
         amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
@@ -824,9 +772,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Deploy the Portal Energy Token of this Portal
     /// @dev This function deploys the PortalEnergyToken of this Portal with the Portal as owner
-    /// @dev Must be called before Portal is activated
     /// @dev Can only be called once
-    function create_portalEnergyToken() external nonActivePortalCheck {
+    function create_portalEnergyToken() external {
         if (portalEnergyTokenCreated) {
             revert TokenExists();
         }
@@ -847,8 +794,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
         portalEnergyToken = new MintBurnToken(name, symbol);
-
-        emit PortalEnergyTokenDeployed(address(portalEnergyToken));
     }
 
     /// @notice Users can burn their PortalEnergyTokens to increase portalEnergy of a recipient
@@ -879,7 +824,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     }
 
     /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of user equally
-    /// @dev This function is private and can only be called internally
+    /// @dev This function burns portalEnergyToken from the user and increases the internal account balance
     /// @param _user The address whose portalEnergy is to be increased
     /// @param _amount The amount of portalEnergyToken to burn
     function _burnPortalEnergyToken(address _user, uint256 _amount) private {
@@ -888,9 +833,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Burn portalEnergyToken from the caller's wallet
         portalEnergyToken.burnFrom(_user, _amount);
-
-        /// @dev Emit the event that the ERC20 representation has been burned and value accrued to recipient
-        emit PortalEnergyBurned(_user, _user, _amount);
     }
 
     /// @notice Users can mint portalEnergyToken to a recipient address using their internal balance
@@ -956,7 +898,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Require that the new value will be larger than the existing value
         if (newValue <= maxLockDuration) {
-            revert DurationBelowCurrent();
+            revert DurationTooLow();
         }
 
         if (newValue >= TERMINAL_MAX_LOCK_DURATION) {

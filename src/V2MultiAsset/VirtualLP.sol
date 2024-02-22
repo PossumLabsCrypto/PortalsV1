@@ -11,17 +11,6 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-/// @title Portal V2 Virtual LP
-/// @author Possum Labs
-/** @notice This contract serves as the shared, virtual LP for multiple Portals
- * Each Portal registers with an individual constantProduct K
- * The full amount of PSM inside the LP is available for each Portal
- * The LP is refilled by convert() calls which exchanges ERC20 balances for PSM
- * The contract is owned for a predetermined time to enable registering more Portals
- * Registering more Portals must be permissioned because it can be malicious
- * Portals cannot be removed from the registry to guarantee Portal integrity
- */
-
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
@@ -38,15 +27,23 @@ error DeadlineExpired();
 error FailedToSendNativeToken();
 error FundingPhaseOngoing();
 error FundingInsufficient();
-error bTokenNotDeployed();
 error TokenExists();
 error TimeLockActive();
 error NoProfit();
-error PortalAlreadyRegistered();
 error OwnerRevoked();
 
-/// @dev Deployment Process:
-/// @dev 1. Deploy VirtualLP, 2. Deploy Portals, 3. Register Portals in VirtualLP
+/// @title Portal V2 Virtual LP
+/// @author Possum Labs
+/** @notice This contract serves as the shared, virtual LP for multiple Portals
+ * Each Portal must be registered by the owner
+ * The contract is owned for a predetermined duration to enable registering more Portals
+ * Registering more Portals must be permissioned because it can be malicious
+ * Portals cannot be removed from the registry to guarantee Portal integrity
+ * The full amount of PSM inside the LP is available to provide upfront yield for each Portal
+ * Capital staked through the connected Portals is redirected and staked in an external yield source
+ * The LP is refilled by convert() calls which exchanges ERC20 balances for PSM
+ */
+/// @dev Setup Process: 1. Deploy VirtualLP, 2. Deploy Portals, 3. Register Portals in VirtualLP
 contract VirtualLP is ReentrancyGuard {
     constructor(
         address _owner,
@@ -105,6 +102,7 @@ contract VirtualLP is ReentrancyGuard {
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
+
     address constant SINGLE_STAKING =
         0x314223E2fA375F972E159002Eb72A96301E99e22;
     address constant DUAL_STAKING = 0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
@@ -132,7 +130,6 @@ contract VirtualLP is ReentrancyGuard {
         uint256 amount
     );
 
-    event bTokenDeployed(address bToken);
     event FundingReceived(address indexed, uint256 amount);
     event FundingWithdrawn(address indexed, uint256 amount);
     event RewardsRedeemed(
@@ -140,6 +137,8 @@ contract VirtualLP is ReentrancyGuard {
         uint256 amountBurned,
         uint256 amountReceived
     );
+
+    event RewardsClaimed(address indexed portal, uint256 timeStamp);
 
     // ============================================
     // ==               MODIFIERS                ==
@@ -159,7 +158,6 @@ contract VirtualLP is ReentrancyGuard {
     }
 
     modifier registeredPortal() {
-        /// @dev Check that the caller is a registered address (Portal)
         if (!registeredPortals[msg.sender]) {
             revert PortalNotRegistered();
         }
@@ -177,20 +175,27 @@ contract VirtualLP is ReentrancyGuard {
     // ==             LP FUNCTIONS               ==
     // ============================================
     /// @notice This function transfers PSM to a recipient address
+    /// @dev Transfer an amount of PSM to a recipient
     /// @dev Can only be called by a registered address (Portal)
     /// @dev All critical logic is handled by the Portal, hence no additional checks
+    /// @param _recipient The address that recieves the PSM
+    /// @param _amount The amount of PSM send to the recipient
     function PSM_sendToPortalUser(
         address _recipient,
         uint256 _amount
-    ) external nonReentrant registeredPortal {
+    ) external registeredPortal {
         /// @dev Transfer PSM to the recipient
         IERC20(PSM_ADDRESS).transfer(_recipient, _amount);
     }
 
     /// @notice Function to add new Portals to the registry
-    /// @dev Portals can only be added, never removed
+    /// @dev Add new Portals to the registry. Portals can only be added, never removed
     /// @dev Only callable by owner to prevent malicious Portals
-    /// @dev Function can override existing registries to correct potential errors
+    /// @dev Function can override existing registries to fix potential integration errors
+    /// @param _portal The address of the Portal to register
+    /// @param _asset The address of the principal token of the Portal
+    /// @param _vault The address of the staking Vault used by the Portal in the external protocol
+    /// @param _pid The pool identifier of the staking Vault, relevant for the SingleStaking contract
     function registerPortal(
         address _portal,
         address _asset,
@@ -223,36 +228,40 @@ contract VirtualLP is ReentrancyGuard {
     // ==      EXTERNAL PROTOCOL INTEGRATION     ==
     // ============================================
     /// @notice Deposit principal into the yield source
-    /// @dev This function deposits principal tokens from the Portal into the external protocol
-    /// @dev Transfer the tokens from the Portal to the external protocol via interface
+    /// @dev This function deposits principal tokens from a connected Portal into the external protocol
+    /// @dev Receive and transfer tokens from the Portal to the external protocol via interface
+    /// @param _asset The address of the asset to deposit
+    /// @param _amount The amount of asset to deposit
     function depositToYieldSource(
         address _asset,
         uint256 _amount
     ) external registeredPortal {
-        /// @dev Check that timeLock is zero to protect from griefing attack
+        /// @dev Check that timeLock is zero to protect stakers from griefing attack
         if (IWater(vaults[msg.sender][_asset]).lockTime() > 0) {
             revert TimeLockActive();
         }
 
-        /// @dev Deposit Token into Vault to receive Shares (WATER)
-        /// @dev Approval of token spending is handled with separate function to save gas
+        /// @dev Deposit tokens into Vault to receive Shares (WATER)
+        /// @dev Approval of token spending is handled with a separate function to save gas
         uint256 depositShares = IWater(vaults[msg.sender][_asset]).deposit(
             _amount,
             address(this)
         );
 
         /// @dev Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        /// @dev Approval of token spending is handled with separate function to save gas
+        /// @dev Approval of token spending is handled with a separate function to save gas
         ISingleStaking(SINGLE_STAKING).deposit(
             poolID[msg.sender][_asset],
             depositShares
         );
     }
 
-    /// @notice Withdraw principal from the yield source to the Portal
-    /// @dev This function withdraws principal tokens from the external protocol to the Portal
-    /// @dev It transfers the tokens from the external protocol to the Portal via interface
-    /// @param _amount The amount of tokens to withdraw
+    /// @notice Withdraw principal from the yield source to the user
+    /// @dev This function withdraws principal tokens from the external protocol
+    /// @dev Transfer the tokens from the external protocol to a Portal user via integration interface
+    /// @param _asset The address of the asset to withdraw
+    /// @param _user The address of the user that will receive the withdrawn assets
+    /// @param _amount The amount of assets to withdraw
     function withdrawFromYieldSource(
         address _asset,
         address _user,
@@ -291,10 +300,8 @@ contract VirtualLP is ReentrancyGuard {
             if (!sent) {
                 revert FailedToSendNativeToken();
             }
-        }
-
-        /// @dev Check if handling ERC20 token
-        if (_asset != address(0)) {
+        } else {
+            /// @dev If handling ERC20 token
             /// @dev Withdraw the staked assets from Vault
             balanceBefore = IERC20(_asset).balanceOf(address(this));
             IWater(vaults[msg.sender][_asset]).withdraw(
@@ -312,28 +319,34 @@ contract VirtualLP is ReentrancyGuard {
         }
     }
 
-    /// @dev Claim pending esVKA and USDC rewards, restake esVKA
-    function claimRewards(address _portal) external {
+    /// @notice Claim pending esVKA and USDC rewards, then restake esVKA
+    /// @dev Claim protocol rewards for a specific Portal and restake esVKA
+    /// @param _portal The address of a registered Portal
+    function claimProtocolRewards(address _portal) external {
         /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
+        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
-        // Claim esVKA rewards from staking the asset
+        /// @dev Claim esVKA rewards from staking the Vault Shares
         ISingleStaking(SINGLE_STAKING).deposit(poolID[_portal][asset], 0);
 
         uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
 
-        // Stake esVKA
-        // Approval of token spending is handled with separate function to save gas
+        /// @dev Stake esVKA into the Dual Staking contract
+        /// @dev Approval of token spending is handled with a separate function to save gas
         if (esVKABalance > 0) {
             IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
         }
 
-        // Claim esVKA and USDC from DualStaking, stake the esVKA reward and send USDC to contract
+        /// @dev Claim esVKA and USDC from DualStaking, stake the esVKA reward and receive USDC to contract
         IDualStaking(DUAL_STAKING).compound();
+
+        /// @dev Emit the event that rewards have been claimed
+        emit RewardsClaimed(_portal, block.timestamp);
     }
 
-    /// @dev Get the surplus assets in the Vault excluding withdrawal fee for internal use
+    /// @notice Internal function to get Vault profit before withdrawal fees
+    /// @dev Get the surplus assets in the Vault excluding withdrawal fee
+    /// @param _portal The address of a registered Portal
     function _getProfitOfPortal(
         address _portal
     ) private view returns (uint256 profitAsset, uint256 profitShares) {
@@ -363,28 +376,31 @@ contract VirtualLP is ReentrancyGuard {
         );
     }
 
-    /// @dev Show the surplus assets in the Vault after deducting withdrawal fees
-    /// @dev May underestimate the real reward slightly due to precision limit
+    /// @notice View current net profit of a Vault used by a specific Portal
+    /// @dev Get surplus assets in the Vault after deducting withdrawal fees
+    /// @param _portal The address of a registered Portal
     function getProfitOfPortal(
         address _portal
     ) external view returns (uint256 profitOfAsset) {
         /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
+        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
+        /// @dev Get the gross profit of the Vault
         (uint256 profit, ) = _getProfitOfPortal(_portal);
 
+        /// @dev Calculate the net profit after withdrawal fees
         uint256 denominator = IWater(vaults[_portal][asset]).DENOMINATOR();
         uint256 withdrawalFee = IWater(vaults[_portal][asset]).withdrawalFees();
 
         profitOfAsset = (profit * (denominator - withdrawalFee)) / denominator;
     }
 
+    /// @notice Withdraw the asset surplus of a Vault used by a specific Portal
     /// @dev Withdraw the asset surplus from Vault to contract
+    /// @param _portal The address of a registered Portal
     function collectProfitOfPortal(address _portal) public {
         /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
+        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
         (uint256 profit, uint256 shares) = _getProfitOfPortal(_portal);
 
@@ -404,15 +420,18 @@ contract VirtualLP is ReentrancyGuard {
         );
     }
 
-    /// @notice Read the pending USDC protocol rewards earned by the LP
+    /// @notice Read the pending USDC protocol rewards earned by the LP contract
     /// @dev Get current USDC rewards pending from protocol fees
     function getPendingRewardsUSDC() external view returns (uint256 rewards) {
         rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
     }
 
+    /// @notice Read the timelock value of a Vault used by a specific Portal
+    /// @dev Get the timelock of a Vault used by a Portal
+    /// @param _portal The address of a registered Portal
     function getPortalVaultLockTime(
         address _portal
-    ) public view returns (uint256 lockTime) {
+    ) external view returns (uint256 lockTime) {
         /// @dev Get the asset of the Portal
         IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
         address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
@@ -420,7 +439,9 @@ contract VirtualLP is ReentrancyGuard {
         lockTime = IWater(vaults[_portal][asset]).lockTime();
     }
 
-    /// @dev This function allows to update the Boost Multiplier to earn more esVKA
+    /// @notice This function allows to update the Boost Multiplier to earn more esVKA
+    /// @dev Update the Boost Multiplier of a Vault used by a specific Portal
+    /// @param _portal The address of a registered Portal
     function updatePortalBoostMultiplier(address _portal) public {
         /// @dev Get the asset of the Portal
         IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
@@ -432,13 +453,14 @@ contract VirtualLP is ReentrancyGuard {
         );
     }
 
-    // Increase the token spending allowance of Assets by the associated Vault (WATER)
+    /// @notice This function increases spending allowance for staking assets by Vaults
+    /// @dev Increase the token spending allowance of assets by a staking Vault of a specific Portal
+    /// @param _portal The address of a registered Portal
     function increaseAllowanceVault(address _portal) public {
         /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
+        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
-        // Allow spending of Assets by the associated Vault
+        /// @dev Allow spending of Assets by the associated Vault
         address tokenAdr = (asset == address(0)) ? WETH_ADDRESS : asset;
         IERC20(tokenAdr).safeIncreaseAllowance(
             vaults[_portal][asset],
@@ -446,22 +468,23 @@ contract VirtualLP is ReentrancyGuard {
         );
     }
 
-    // Increase the token spending allowance of Vault Shares by the Single Staking contract
+    /// @notice This function increases spending allowance for Vault Shares by the SingleStaking contract
+    /// @dev Increase the token spending allowance of Vault Shares by the Single Staking contract
+    /// @param _portal The address of a registered Portal
     function increaseAllowanceSingleStaking(address _portal) public {
         /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
+        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
-        // Allow spending of Vault shares of an asset by the single staking contract
+        /// @dev Allow spending of Vault Shares of a Portal by the single staking contract
         IERC20(vaults[_portal][asset]).safeIncreaseAllowance(
             SINGLE_STAKING,
             MAX_UINT
         );
     }
 
-    // Increase the token spending allowance of esVKA by the Dual Staking contract
+    /// @notice This function increases spending allowance for esVKA by the DualStaking contract
+    /// @dev Increase the token spending allowance of esVKA by the DualStaking contract
     function increaseAllowanceDualStaking() public {
-        // Allow spending of esVKA by the Dual Staking contract
         IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, MAX_UINT);
     }
 
@@ -547,9 +570,8 @@ contract VirtualLP is ReentrancyGuard {
     // ==                FUNDING                 ==
     // ============================================
     /// @notice End the funding phase and enable normal contract functionality
-    /// @dev This function activates the portal and initializes the internal LP
-    /// @dev Can only be called when the Portal is inactive
-    /// @dev Calculate the constant product K, which is used to initialize the internal LP
+    /// @dev This function activates the Virtual LP
+    /// @dev Can only be called when the Virtual LP is inactive
     function activateLP() external inactiveLP {
         /// @dev Check that the funding phase is over and enough funding has been contributed
         if (block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {
@@ -559,14 +581,14 @@ contract VirtualLP is ReentrancyGuard {
             revert FundingInsufficient();
         }
 
-        /// @dev Activate the portal
+        /// @dev Activate the Virtual LP
         isActiveLP = true;
 
-        /// @dev Emit the PortalActivated event with the address of the contract and the funding balance
+        /// @dev Emit the activation event with the address of the contract and the funding balance
         emit LP_Activated(address(this), fundingBalance);
     }
 
-    /// @notice Allow users to deposit PSM to provide the initial upfront yield
+    /// @notice Allow users to deposit PSM to fund the Virtual LP
     /// @dev This function allows users to deposit PSM tokens during the funding phase
     /// @dev The bToken must have been deployed via the contract in advance
     /// @dev Increase the fundingBalance tracker by the amount of PSM deposited
@@ -591,11 +613,11 @@ contract VirtualLP is ReentrancyGuard {
         /// @dev Mint bTokens to the user
         bToken.mint(msg.sender, mintableAmount);
 
-        /// @dev Emit the FundingReceived event with the user's address and the mintable amount
+        /// @dev Emit the FundingReceived event with the user address and the mintable amount
         emit FundingReceived(msg.sender, mintableAmount);
     }
 
-    /// @notice Allow users to burn bTokens to recover PSM funding before the Portal is activated
+    /// @notice Allow users to burn bTokens to recover PSM funding before the Virtual LP is activated
     /// @dev This function allows users to withdraw PSM tokens during the funding phase of the contract
     /// @dev The bToken must have been deployed via the contract in advance
     /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
@@ -620,11 +642,12 @@ contract VirtualLP is ReentrancyGuard {
         /// @dev Burn bTokens from the user
         bToken.burnFrom(msg.sender, _amount);
 
-        /// @dev Emit the FundingReceived event with the user's address and the mintable amount
+        /// @dev Emit the FundingReceived event with the user address and the mintable amount
         emit FundingWithdrawn(msg.sender, withdrawAmount);
     }
 
     /// @notice Calculate the current burn value of bTokens
+    /// @dev Get the current burn value of any amount of bTokens
     /// @param _amount The amount of bTokens to burn
     /// @return burnValue The amount of PSM received when redeeming bTokens
     function getBurnValuePSM(
@@ -646,7 +669,7 @@ contract VirtualLP is ReentrancyGuard {
     }
 
     /// @notice Get the amount of bTokens that can be burned against the reward Pool
-    /// @dev Calculate how many bTokens can be burned to redeem the full reward Pool
+    /// @dev Calculate how many bTokens can be burned to redeem the entire reward Pool
     /// @return amountBurnable The amount of bTokens that can be redeemed for rewards
     function getBurnableBtokenAmount()
         public
@@ -655,7 +678,7 @@ contract VirtualLP is ReentrancyGuard {
         returns (uint256 amountBurnable)
     {
         /// @dev Calculate the burn value of 1 full bToken in PSM
-        /// @dev Add 1 WEI to handle potential rounding issue in the next step
+        /// @dev Add 1 WEI to handle rounding issue in the next step
         uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
 
         /// @dev Calculate and return the amount of bTokens burnable
@@ -664,10 +687,10 @@ contract VirtualLP is ReentrancyGuard {
         amountBurnable = (rewards * 1e18) / burnValueFullToken;
     }
 
-    /// @notice Users redeem bTokens for PSM tokens
-    /// @dev This function allows users to burn bTokens to receive PSM when the Portal is active
+    /// @notice This function allows users to redeem bTokens for PSM tokens
+    /// @dev Burn bTokens to receive PSM when the Portal is active
     /// @dev Reduce the funding reward pool by the amount of PSM payable to the user
-    /// @dev Burn the bTokens from the user's wallet
+    /// @dev Burn the bTokens from the user wallet
     /// @dev Transfer the PSM tokens to the user
     /// @param _amount The amount of bTokens to burn
     function burnBtokens(uint256 _amount) external {
@@ -701,9 +724,9 @@ contract VirtualLP is ReentrancyGuard {
     // ============================================
     // ==           GENERAL FUNCTIONS            ==
     // ============================================
-    /// @notice Deploy the bToken of this Portal
-    /// @dev This function deploys the bToken of this Portal with the Portal as owner
-    /// @dev Must be called before Portal is activated
+    /// @notice Deploy the bToken of the Virtual LP
+    /// @dev This function deploys the bToken of this contract and takes ownership
+    /// @dev Must be called before the Virtual LP is activated
     /// @dev Can only be called once
     function create_bToken() external inactiveLP {
         if (bTokenCreated) {
@@ -719,7 +742,5 @@ contract VirtualLP is ReentrancyGuard {
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
         bToken = new MintBurnToken(name, symbol);
-
-        emit bTokenDeployed(address(bToken));
     }
 }
