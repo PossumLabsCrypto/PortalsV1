@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.19;
 
-// Test File 1: Virtual LP
-// Test File 2: ETH Portal + USDC Portal
-// Test File 3: Multi-Portal LP interaction
-
 import {Test, console2} from "forge-std/Test.sol";
 import {PortalV2MultiAsset} from "src/V2MultiAsset/PortalV2MultiAsset.sol";
 import {MintBurnToken} from "src/V2MultiAsset/MintBurnToken.sol";
 import {VirtualLP} from "src/V2MultiAsset/VirtualLP.sol";
+import {ErrorsLib} from "./libraries/ErrorsLib.sol";
+import {EventsLib} from "./libraries/EventsLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract PortalV2MultiAssetTest is Test {
     // External token addresses
+    address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address public constant PSM_ADDRESS =
         0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
     address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
@@ -27,13 +26,6 @@ contract PortalV2MultiAssetTest is Test {
     uint256 constant _TERMINAL_MAX_LOCK_DURATION = 157680000;
     uint256 private constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
     uint256 public maxLockDuration = 7776000; // 7776000 starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
-
-    // portal instances
-    PortalV2MultiAsset public portal_USDC;
-    PortalV2MultiAsset public portal_ETH;
-
-    // Shared virtual LP
-    VirtualLP public virtualLP;
 
     // Portal Constructor values
     uint256 constant _TARGET_CONSTANT_USDC = 1101321585903080 * 1e18;
@@ -70,126 +62,34 @@ contract PortalV2MultiAssetTest is Test {
     address payable Bob = payable(0x58071967a168245cBAF2b59C67527E0FDeC6F919);
     address payable Karen = payable(0x3A30aaf1189E830b02416fb8C513373C659ed748);
 
-    // ============================================
-    // ==                EVENTS                  ==
-    // ============================================
-    // --- Events related to the funding phase ---
-    event bTokenDeployed(address bToken);
-    event PortalEnergyTokenDeployed(address PortalEnergyToken);
-    event PortalNFTdeployed(address PortalNFTcontract);
+    // Token Instances
+    IERC20 psm = IERC20(PSM_ADDRESS);
+    IERC20 usdc = IERC20(_PRINCIPAL_TOKEN_ADDRESS_USDC);
+    IERC20 weth = IERC20(WETH_ADDRESS);
 
-    event FundingReceived(address indexed, uint256 amount);
-    event FundingWithdrawn(address indexed, uint256 amount);
-    event PortalActivated(address indexed, uint256 fundingBalance);
+    // Portals & LP
+    PortalV2MultiAsset public portal_USDC;
+    PortalV2MultiAsset public portal_ETH;
+    VirtualLP public virtualLP;
 
-    event RewardsRedeemed(
-        address indexed,
-        uint256 amountBurned,
-        uint256 amountReceived
-    );
+    // Simulated USDC distributor
+    address usdcSender = 0xF977814e90dA44bFA03b6295A0616a897441aceC;
 
-    // --- Events related to internal exchange PSM vs. portalEnergy ---
-    event PortalEnergyBuyExecuted(
-        address indexed caller,
-        address indexed recipient,
-        uint256 amount
-    );
-    event PortalEnergySellExecuted(
-        address indexed caller,
-        address indexed recipient,
-        uint256 amount
-    );
+    // PSM Treasury
+    address psmSender = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
 
-    event ConvertExecuted(
-        address indexed token,
-        address indexed caller,
-        address indexed recipient,
-        uint256 amount
-    );
-
-    // --- Events related to minting and burning portalEnergyToken & NFTs ---
-    event PortalEnergyMinted(
-        address indexed,
-        address recipient,
-        uint256 amount
-    );
-    event PortalEnergyBurned(
-        address indexed caller,
-        address recipient,
-        uint256 amount
-    );
-
-    event PortalNFTminted(
-        address indexed caller,
-        address indexed recipient,
-        uint256 nftID
-    );
-
-    event PortalNFTredeemed(
-        address indexed caller,
-        address indexed recipient,
-        uint256 nftID
-    );
-
-    // --- Events related to staking & unstaking ---
-    event PrincipalStaked(address indexed user, uint256 amountStaked);
-    event PrincipalUnstaked(address indexed user, uint256 amountUnstaked);
-    event RewardsClaimed(
-        address[] indexed pools,
-        address[][] rewarders,
-        uint256 timeStamp
-    );
-
-    event StakePositionUpdated(
-        address indexed user,
-        uint256 lastUpdateTime,
-        uint256 lastMaxLockDuration,
-        uint256 stakedBalance,
-        uint256 maxStakeDebt,
-        uint256 portalEnergy
-    );
-
-    event MaxLockDurationUpdated(uint256 newDuration);
-
-    // ============================================
-    // ==              CUSTOM ERRORS             ==
-    // ============================================
-    error InsufficientReceived();
-    error InvalidAddress();
-    error InvalidAmount();
-    error DeadlineExpired();
-    error InvalidConstructor();
-    error DurationTooLow();
-    error NativeTokenNotAllowed();
-    error TokenExists();
-    error EmptyAccount();
-    error InsufficientBalance();
-    error DurationLocked();
-    error InsufficientToWithdraw();
-    error InsufficientStakeBalance();
-    error InactiveLP();
-    error ActiveLP();
-    error NotOwner();
-    error PortalNotRegistered();
-    error OwnerNotExpired();
-    error FailedToSendNativeToken();
-    error FundingPhaseOngoing();
-    error FundingInsufficient();
-    error TimeLockActive();
-    error NoProfit();
-    error OwnerRevoked();
-
+    ////////////// SETUP ////////////////////////
     function setUp() public {
-        // Create Shared LP
+        // Create Virtual LP instance
         virtualLP = new VirtualLP(
-            msg.sender,
+            address(this),
             _AMOUNT_TO_CONVERT,
             _FUNDING_PHASE_DURATION,
             _FUNDING_MIN_AMOUNT
         );
         address _VIRTUAL_LP = address(virtualLP);
 
-        // Create new Portals
+        // Create Portal instances
         portal_USDC = new PortalV2MultiAsset(
             _VIRTUAL_LP,
             _TARGET_CONSTANT_USDC,
@@ -211,21 +111,25 @@ contract PortalV2MultiAssetTest is Test {
 
         // Deal tokens to addresses
         vm.deal(Alice, 1 ether);
-        deal(PSM_ADDRESS, Alice, 1e30, true);
-        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Alice, 1e30, true);
+        vm.prank(psmSender);
+        psm.transfer(Alice, 1e25);
+        vm.prank(usdcSender);
+        usdc.transfer(Alice, 1e13);
 
         vm.deal(Bob, 1 ether);
-        deal(PSM_ADDRESS, Bob, 1e30, true);
-        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Bob, 1e30, true);
+        vm.prank(psmSender);
+        psm.transfer(Bob, 1e25);
+        vm.prank(usdcSender);
+        usdc.transfer(Bob, 1e13);
 
         vm.deal(Karen, 1 ether);
-        deal(PSM_ADDRESS, Karen, 1e30, true);
-        deal(_PRINCIPAL_TOKEN_ADDRESS_USDC, Karen, 1e30, true);
+        vm.prank(psmSender);
+        psm.transfer(Karen, 1e25);
+        vm.prank(usdcSender);
+        usdc.transfer(Karen, 1e13);
     }
 
-    // ===================================
-    // ========= HELPER FUNCTIONS ========
-    // ===================================
+    ////////////// HELPER FUNCTIONS /////////////
     // Register USDC Portal
     function helper_registerPortalUSDC() public {
         address vaultAddress = virtualLP.vaults(
@@ -237,7 +141,7 @@ contract PortalV2MultiAssetTest is Test {
             _PRINCIPAL_TOKEN_ADDRESS_USDC
         );
 
-        // register Portal
+        // register USDC Portal
         virtualLP.registerPortal(
             address(portal_USDC),
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
@@ -266,72 +170,89 @@ contract PortalV2MultiAssetTest is Test {
         );
     }
 
-    // Fund Virtual LP
-
-    // Activate USDC LP
-
     // ===================================
-    // ========== REVERT TESTS ===========
+    // ============= TESTS ===============
     // ===================================
+    // Test Section 1: Virtual LP - Bootstrapping & Activation
+    // Test Section 2: ETH Portal + USDC Portal - Isolated Interactions & Vaultka Integration
+    // Test Section 3: Multi-Portal LP interaction
+
+    // Test Section 1: Virtual LP - Bootstrapping & Activation
+    // First: Test revert of functions that should revert before the LP is funded and activated
+    /////////////// LP functions ///////////////
+    function testRevert_removeOwner() public {
+        vm.expectRevert(ErrorsLib.OwnerNotExpired.selector);
+        virtualLP.removeOwner();
+    }
+
+    // getBurnValuePSM
+    function testRevert_getBurnValuePSM() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InactiveLP.selector);
+        virtualLP.getBurnValuePSM(1e18);
+        vm.stopPrank();
+    }
+
+    // getBurnableBtokenAmount
+    function testRevert_getBurnableBtokenAmount() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InactiveLP.selector);
+        virtualLP.getBurnableBtokenAmount();
+        vm.stopPrank();
+    }
+
+    // burnBtokens
+    function testRevert_burnBtokens_I() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InactiveLP.selector);
+        virtualLP.burnBtokens(100);
+        vm.stopPrank();
+    }
+
+    // convert
+    function testRevert_convert_I() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InactiveLP.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            1,
+            block.timestamp
+        );
+        vm.stopPrank();
+    }
+
+    // function testRevert_convert_II() public {
+    //     // activate Portal
+
+    //     vm.startPrank(Alice);
+    //     vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+    //     virtualLP.convert(PSM_ADDRESS, msg.sender, 1, block.timestamp);
+    //     vm.stopPrank();
+    // }
+
+    ///////////// Portal functions ///////////
     // getUpdateAccount
     function testRevert_getUpdateAccount() public {
         vm.startPrank(Alice);
         // Try to simulate a withdrawal greater than the stake balance
-        vm.expectRevert(InsufficientToWithdraw.selector);
+        vm.expectRevert(ErrorsLib.InsufficientToWithdraw.selector);
         portal_USDC.getUpdateAccount(Alice, 100, false);
-    }
-
-    // stake before Portal was registered
-    function testRevert_stake_I() public {
-        vm.startPrank(Alice);
-        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
-        // Portal is not registered with the Virtual LP yet
-        vm.expectRevert(PortalNotRegistered.selector);
-        portal_USDC.stake(23450);
-    }
-
-    // stake after Portal was registered
-    function testRevert_stake_II() public {
-        helper_registerPortalUSDC();
-        // Fund and activate Virtual LP
-
-        vm.startPrank(Alice);
-        IERC20(PSM_ADDRESS).approve(address(portal_USDC), 1e55);
-
-        // Trying to stake zero tokens
-        vm.expectRevert(InvalidAmount.selector);
-        portal_USDC.stake(0);
-
-        // Sending ether with the function call using the USDC Portal
-        vm.expectRevert(NativeTokenNotAllowed.selector);
-        portal_USDC.stake{value: 100}(100);
-    }
-
-    // stake ETH with differing input values
-    function testRevert_stake_III() public {
-        helper_registerPortalETH();
-        // Fund and activate Virtual LP
-
-        vm.startPrank(Alice);
-        // Sending zero ether value but positive input amount
-        vm.expectRevert(InvalidAmount.selector);
-        portal_ETH.stake{value: 0}(100);
+        vm.stopPrank();
     }
 
     // mintNFTposition
     function testRevert_mintNFTposition() public {
         vm.startPrank(Alice);
         // Invalid recipient
-        vm.expectRevert(InvalidAddress.selector);
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
         portal_USDC.mintNFTposition(address(0));
 
         // Empty Account
-        vm.expectRevert(EmptyAccount.selector);
+        vm.expectRevert(ErrorsLib.EmptyAccount.selector);
         portal_USDC.mintNFTposition(Alice);
 
-        // NFT contract is not yet deployed
-        vm.expectRevert();
-        portal_USDC.mintNFTposition(Alice);
+        vm.stopPrank();
     }
 
     // quoteBuyPortalEnergy - LP not yet funded, i.e. Reserve0 == 0 -> math error
@@ -339,6 +260,7 @@ contract PortalV2MultiAssetTest is Test {
         vm.startPrank(Alice);
         vm.expectRevert();
         portal_USDC.quoteBuyPortalEnergy(123456);
+        vm.stopPrank();
     }
 
     // quoteSellPortalEnergy - LP not yet funded, i.e. Reserve0 == 0 -> math error
@@ -346,13 +268,48 @@ contract PortalV2MultiAssetTest is Test {
         vm.startPrank(Alice);
         vm.expectRevert();
         portal_USDC.quoteSellPortalEnergy(123456);
+        vm.stopPrank();
     }
 
-    // ===================================
-    // ========= SUCCESS TESTS ===========
-    // ===================================
+    // stake before Portal was registered
+    function testRevert_stake_I() public {
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+        // Portal is not registered with the Virtual LP yet
+        vm.expectRevert(ErrorsLib.PortalNotRegistered.selector);
+        portal_USDC.stake(23450);
+        vm.stopPrank();
+    }
+
+    // stake after Portal was registered but not funded
+    function testRevert_stake_II() public {
+        helper_registerPortalUSDC();
+
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+
+        // Trying to stake zero tokens
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.stake(0);
+
+        // Sending ether with the function call using the USDC Portal
+        vm.expectRevert(ErrorsLib.NativeTokenNotAllowed.selector);
+        portal_USDC.stake{value: 100}(100);
+        vm.stopPrank();
+    }
+
+    // stake ETH with difference in input amount and message value
+    function testRevert_stake_III() public {
+        helper_registerPortalETH();
+
+        vm.startPrank(Alice);
+        // Sending zero ether value but positive input amount
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_ETH.stake{value: 0}(100);
+        vm.stopPrank();
+    }
+
     // create_portalEnergyToken
-    // update parameters, create new contract
     function testSuccess_create_portalEnergyToken() public {
         assertTrue(address(portal_USDC.portalEnergyToken()) == address(0));
         assertTrue(portal_USDC.portalEnergyTokenCreated() == false);
@@ -364,7 +321,6 @@ contract PortalV2MultiAssetTest is Test {
     }
 
     // create_portalNFT
-    // update parameters, create new contract
     function testSuccess_create_portalNFT() public {
         assertTrue(address(portal_USDC.portalNFT()) == address(0));
         assertTrue(portal_USDC.portalNFTcreated() == false);
@@ -379,7 +335,6 @@ contract PortalV2MultiAssetTest is Test {
     // create_portalEnergyToken if token has been deployed
     // create_portalNFT if token has been deployed
 
-    // stake ETH: amount > 0 + msg.value = 0
     // unstake: amount 0
     // unstake: amount > user available to withdraw
 
