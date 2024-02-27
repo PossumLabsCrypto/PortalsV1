@@ -43,7 +43,7 @@ error OwnerRevoked();
  * Capital staked through the connected Portals is redirected and staked in an external yield source
  * The LP is refilled by convert() calls which exchanges ERC20 balances for PSM
  */
-/// @dev Setup Process: 1. Deploy VirtualLP, 2. Deploy Portals, 3. Register Portals in VirtualLP
+/// @dev Setup Process: 1. Deploy VirtualLP, 2. Deploy Portals, 3. Register Portals in VirtualLP 4. Activate LP
 contract VirtualLP is ReentrancyGuard {
     constructor(
         address _owner,
@@ -82,7 +82,8 @@ contract VirtualLP is ReentrancyGuard {
     // ============================================
     using SafeERC20 for IERC20;
 
-    MintBurnToken public bToken; // the receipt token for funding the Portal
+    MintBurnToken public bToken; // the receipt token for funding the LP
+    address public bTokenAddress; // the address of the receipt token
 
     uint256 constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
     uint256 constant MAX_UINT =
@@ -96,9 +97,9 @@ contract VirtualLP is ReentrancyGuard {
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
     uint256 public immutable CREATION_TIME; // time stamp of deployment
 
-    uint256 constant FUNDING_APR = 36; // annual redemption value increase (APR) of bTokens
-    uint256 constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
-    uint256 constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
+    uint256 public constant FUNDING_APR = 36; // annual redemption value increase (APR) of bTokens
+    uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
+    uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
@@ -202,7 +203,7 @@ contract VirtualLP is ReentrancyGuard {
         address _vault,
         uint256 _pid
     ) external onlyOwner {
-        ///@dev register Portal so that it can call permissioned functions
+        ///@dev register Portal so that it can call protected functions
         registeredPortals[_portal] = true;
 
         /// @dev update the Portal asset mappings
@@ -381,7 +382,7 @@ contract VirtualLP is ReentrancyGuard {
     /// @param _portal The address of a registered Portal
     function getProfitOfPortal(
         address _portal
-    ) external view returns (uint256 profitOfAsset) {
+    ) external view returns (uint256 profitOfPortal) {
         /// @dev Get the asset of the Portal
         address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
@@ -392,7 +393,7 @@ contract VirtualLP is ReentrancyGuard {
         uint256 denominator = IWater(vaults[_portal][asset]).DENOMINATOR();
         uint256 withdrawalFee = IWater(vaults[_portal][asset]).withdrawalFees();
 
-        profitOfAsset = (profit * (denominator - withdrawalFee)) / denominator;
+        profitOfPortal = (profit * (denominator - withdrawalFee)) / denominator;
     }
 
     /// @notice Withdraw the asset surplus of a Vault used by a specific Portal
@@ -412,7 +413,7 @@ contract VirtualLP is ReentrancyGuard {
         /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
         ISingleStaking(SINGLE_STAKING).withdraw(poolID[_portal][asset], shares);
 
-        /// @dev Withdraw the profit Assets from the Vault to contract (collects WETH from ETH Vault)
+        /// @dev Withdraw the profit Assets from the Vault to contract (collect WETH from ETH Vault)
         IWater(vaults[_portal][asset]).withdraw(
             profit,
             address(this),
@@ -682,9 +683,8 @@ contract VirtualLP is ReentrancyGuard {
         uint256 burnValueFullToken = getBurnValuePSM(1e18) + 1;
 
         /// @dev Calculate and return the amount of bTokens burnable
-        /// @dev Because of the 1 WEI above, this will slightly underestimate for safety reasons
-        uint256 rewards = IERC20(PSM_ADDRESS).balanceOf(address(this));
-        amountBurnable = (rewards * 1e18) / burnValueFullToken;
+        /// @dev This will slightly underestimate because of the 1 WEI for reliability reasons
+        amountBurnable = (fundingRewardPool * 1e18) / burnValueFullToken;
     }
 
     /// @notice This function allows users to redeem bTokens for PSM tokens
@@ -742,5 +742,6 @@ contract VirtualLP is ReentrancyGuard {
 
         /// @dev Deploy the token and update the related storage variable so that other functions can work.
         bToken = new MintBurnToken(name, symbol);
+        bTokenAddress = address(bToken);
     }
 }

@@ -26,13 +26,14 @@ contract PortalV2MultiAssetTest is Test {
     uint256 constant _TERMINAL_MAX_LOCK_DURATION = 157680000;
     uint256 private constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
     uint256 public maxLockDuration = 7776000; // 7776000 starting value for maximum allowed lock duration of user´s balance in seconds (90 days)
+    uint256 private constant OWNER_DURATION = 31536000; // 1 Year
 
     // Portal Constructor values
     uint256 constant _TARGET_CONSTANT_USDC = 1101321585903080 * 1e18;
     uint256 constant _TARGET_CONSTANT_WETH = 423076988165 * 1e18;
 
     uint256 constant _FUNDING_PHASE_DURATION = 604800; // 7 days
-    uint256 constant _FUNDING_MIN_AMOUNT = 5e25;
+    uint256 constant _FUNDING_MIN_AMOUNT = 1e25; // 10M PSM
 
     address private constant _PRINCIPAL_TOKEN_ADDRESS_USDC =
         0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
@@ -56,10 +57,12 @@ contract PortalV2MultiAssetTest is Test {
     // time
     uint256 timestamp;
     uint256 fundingPhase;
+    uint256 ownerExpiry;
+    uint256 hundredYearsLater;
 
     // prank addresses
     address payable Alice = payable(0x46340b20830761efd32832A74d7169B29FEB9758);
-    address payable Bob = payable(0x58071967a168245cBAF2b59C67527E0FDeC6F919);
+    address payable Bob = payable(0xDD56CFdDB0002f4d7f8CC0563FD489971899cb79);
     address payable Karen = payable(0x3A30aaf1189E830b02416fb8C513373C659ed748);
 
     // Token Instances
@@ -78,11 +81,16 @@ contract PortalV2MultiAssetTest is Test {
     // PSM Treasury
     address psmSender = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
 
+    // starting token amounts
+    uint256 usdcAmount = 1e13; // 10M USDC
+    uint256 psmAmount = 1e25; // 10M PSM
+    uint256 usdcSendAmount = 1e9; // 1k USDC
+
     ////////////// SETUP ////////////////////////
     function setUp() public {
         // Create Virtual LP instance
         virtualLP = new VirtualLP(
-            address(this),
+            psmSender,
             _AMOUNT_TO_CONVERT,
             _FUNDING_PHASE_DURATION,
             _FUNDING_MIN_AMOUNT
@@ -108,28 +116,45 @@ contract PortalV2MultiAssetTest is Test {
         // creation time
         timestamp = block.timestamp;
         fundingPhase = timestamp + _FUNDING_PHASE_DURATION;
+        ownerExpiry = timestamp + OWNER_DURATION;
+        hundredYearsLater = timestamp + 100 * SECONDS_PER_YEAR;
 
         // Deal tokens to addresses
         vm.deal(Alice, 1 ether);
         vm.prank(psmSender);
-        psm.transfer(Alice, 1e25);
+        psm.transfer(Alice, psmAmount);
         vm.prank(usdcSender);
-        usdc.transfer(Alice, 1e13);
+        usdc.transfer(Alice, usdcAmount);
 
         vm.deal(Bob, 1 ether);
         vm.prank(psmSender);
-        psm.transfer(Bob, 1e25);
+        psm.transfer(Bob, psmAmount);
         vm.prank(usdcSender);
-        usdc.transfer(Bob, 1e13);
+        usdc.transfer(Bob, usdcAmount);
 
         vm.deal(Karen, 1 ether);
         vm.prank(psmSender);
-        psm.transfer(Karen, 1e25);
+        psm.transfer(Karen, psmAmount);
         vm.prank(usdcSender);
-        usdc.transfer(Karen, 1e13);
+        usdc.transfer(Karen, usdcAmount);
     }
 
     ////////////// HELPER FUNCTIONS /////////////
+    // create the bToken token
+    function helper_create_bToken() public {
+        virtualLP.create_bToken();
+    }
+
+    // fund the Virtual LP
+    function helper_fundLP() public {
+        vm.startPrank(psmSender);
+
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.contributeFunding(_FUNDING_MIN_AMOUNT);
+
+        vm.stopPrank();
+    }
+
     // Register USDC Portal
     function helper_registerPortalUSDC() public {
         address vaultAddress = virtualLP.vaults(
@@ -142,6 +167,7 @@ contract PortalV2MultiAssetTest is Test {
         );
 
         // register USDC Portal
+        vm.prank(psmSender);
         virtualLP.registerPortal(
             address(portal_USDC),
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
@@ -162,6 +188,7 @@ contract PortalV2MultiAssetTest is Test {
         );
 
         // register Portal
+        vm.prank(psmSender);
         virtualLP.registerPortal(
             address(portal_ETH),
             _PRINCIPAL_TOKEN_ADDRESS_ETH,
@@ -170,46 +197,202 @@ contract PortalV2MultiAssetTest is Test {
         );
     }
 
+    // activate the Virtual LP
+    function helper_activateLP() public {
+        vm.warp(fundingPhase);
+        virtualLP.activateLP();
+    }
+
+    function helper_sendUSDCtoLP() public {
+        vm.prank(usdcSender);
+        usdc.transfer(address(virtualLP), usdcSendAmount); // Send 1k USDC to LP
+    }
+
+    function helper_executeConvert() public {
+        helper_sendUSDCtoLP();
+        vm.startPrank(psmSender);
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            1,
+            block.timestamp
+        );
+        vm.stopPrank();
+    }
+
     // ===================================
     // ============= TESTS ===============
     // ===================================
-    // Test Section 1: Virtual LP - Bootstrapping & Activation
-    // Test Section 2: ETH Portal + USDC Portal - Isolated Interactions & Vaultka Integration
-    // Test Section 3: Multi-Portal LP interaction
-
-    // Test Section 1: Virtual LP - Bootstrapping & Activation
-    // First: Test revert of functions that should revert before the LP is funded and activated
     /////////////// LP functions ///////////////
+    // removeOwner
     function testRevert_removeOwner() public {
+        // try before the timer has expired
         vm.expectRevert(ErrorsLib.OwnerNotExpired.selector);
         virtualLP.removeOwner();
+
+        // try remove again after already removed
+        testSuccess_removeOwner();
+        vm.expectRevert(ErrorsLib.OwnerRevoked.selector);
+        virtualLP.removeOwner();
+    }
+
+    function testSuccess_removeOwner() public {
+        assertTrue(virtualLP.owner() != address(0));
+
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+        vm.warp(ownerExpiry);
+
+        virtualLP.removeOwner();
+        assertTrue(virtualLP.owner() == address(0));
+    }
+
+    // contributeFunding
+    function testRevert_contributeFunding() public {
+        helper_create_bToken();
+
+        // amount zero
+        vm.startPrank(Alice);
+        psm.approve(address(virtualLP), 1e55);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.contributeFunding(0);
+
+        // when LP is active
+        helper_fundLP();
+        helper_activateLP();
+
+        vm.expectRevert(ErrorsLib.ActiveLP.selector);
+        virtualLP.contributeFunding(1000);
+
+        vm.stopPrank();
+    }
+
+    function testSuccess_contributeFunding() public {
+        helper_create_bToken();
+
+        uint256 fundingAmount = 1e18;
+        vm.startPrank(Alice);
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.contributeFunding(fundingAmount);
+        vm.stopPrank();
+
+        IERC20 bToken = IERC20(address(virtualLP.bToken()));
+
+        assertTrue(
+            bToken.balanceOf(Alice) ==
+                (fundingAmount * virtualLP.FUNDING_MAX_RETURN_PERCENT()) / 100
+        );
+        assertTrue(psm.balanceOf(Alice) == psmAmount - fundingAmount);
+        assertTrue(psm.balanceOf(address(virtualLP)) == fundingAmount);
     }
 
     // getBurnValuePSM
     function testRevert_getBurnValuePSM() public {
-        vm.startPrank(Alice);
+        // when LP is inactive
         vm.expectRevert(ErrorsLib.InactiveLP.selector);
         virtualLP.getBurnValuePSM(1e18);
-        vm.stopPrank();
+    }
+
+    function testSuccess_getBurnValuePSM() public {
+        // when LP is active
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+
+        uint256 burnValue = virtualLP.getBurnValuePSM(1e18);
+        assertTrue(burnValue > 0);
+
+        // when maximum burn value is surpassed
+        vm.warp(hundredYearsLater);
+        burnValue = virtualLP.getBurnValuePSM(1e18);
+        assertTrue(
+            burnValue == (1e18 * virtualLP.FUNDING_MAX_RETURN_PERCENT()) / 100
+        );
     }
 
     // getBurnableBtokenAmount
     function testRevert_getBurnableBtokenAmount() public {
+        // when LP is inactive
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.InactiveLP.selector);
         virtualLP.getBurnableBtokenAmount();
         vm.stopPrank();
     }
 
+    function testSuccess_getBurnableBtokenAmount() public {
+        // when LP is active
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+
+        // when fundingRewardPool still empty
+        vm.prank(Alice);
+        uint256 burnableTokens = virtualLP.getBurnableBtokenAmount();
+        assertTrue(burnableTokens == 0);
+
+        // when fundingRewardPool not empty
+        helper_executeConvert();
+        vm.prank(Alice);
+        burnableTokens = virtualLP.getBurnableBtokenAmount();
+        assertTrue(burnableTokens > 0);
+    }
+
     // burnBtokens
-    function testRevert_burnBtokens_I() public {
+    function testRevert_burnBtokens() public {
+        // when LP is inactive
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.InactiveLP.selector);
         virtualLP.burnBtokens(100);
         vm.stopPrank();
+
+        // when LP is active but zero amount
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.burnBtokens(0);
+
+        // trying to burn more than is burnable (zero rewards)
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.burnBtokens(100);
+
+        vm.stopPrank();
     }
 
-    // convert
+    function testSuccess_burnBtokens() public {
+        // Alice helps fund the Portal to get bTokenss
+        vm.prank(Alice);
+        testSuccess_contributeFunding();
+
+        helper_fundLP();
+        helper_activateLP();
+
+        // simulate a convert action so that rewards accrue
+        helper_executeConvert();
+
+        IERC20 bToken = IERC20(address(virtualLP.bToken()));
+
+        // Alice approves and burns bTokens to get rewards
+        vm.startPrank(Alice);
+        bToken.approve(address(virtualLP), 1e55);
+        virtualLP.burnBtokens(1e18); // Alice owns 1e19 bTokens because of testSuccess_contributeFunding
+        vm.stopPrank();
+
+        // check balances
+        assertTrue(psm.balanceOf(Alice) > psmAmount - 1e18); // Alice owns initial balance - funding + redeemed reward
+        assertTrue(
+            psm.balanceOf(address(virtualLP)) <
+                _FUNDING_MIN_AMOUNT + 1e18 + _AMOUNT_TO_CONVERT
+        ); // LP owns funding minimum + funding from Alice + amount to convert - redeemed rewards
+        assertTrue(bToken.balanceOf(Alice) == 9e18);
+    }
+
+    // convert when LP is inactive
     function testRevert_convert_I() public {
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.InactiveLP.selector);
@@ -222,14 +405,73 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // function testRevert_convert_II() public {
-    //     // activate Portal
+    // convert after LP got activated
+    function testRevert_convert_II() public {
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
 
-    //     vm.startPrank(Alice);
-    //     vm.expectRevert(ErrorsLib.InvalidAddress.selector);
-    //     virtualLP.convert(PSM_ADDRESS, msg.sender, 1, block.timestamp);
-    //     vm.stopPrank();
-    // }
+        vm.startPrank(Alice);
+
+        // wrong token address
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        virtualLP.convert(PSM_ADDRESS, msg.sender, 1, block.timestamp);
+
+        // wrong recipient address
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            address(0),
+            1,
+            block.timestamp
+        );
+
+        // wrong amount minReceived
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            0,
+            block.timestamp
+        );
+
+        // LP does not have enough tokens (balance is 0)
+        vm.expectRevert(ErrorsLib.InsufficientReceived.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            1e6,
+            block.timestamp
+        );
+
+        vm.stopPrank();
+    }
+
+    // Successful convert
+    function testSuccess_convert() public {
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+        helper_sendUSDCtoLP();
+
+        vm.startPrank(Alice);
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            Bob,
+            usdcSendAmount,
+            block.timestamp
+        );
+        vm.stopPrank();
+
+        assertTrue(psm.balanceOf(Alice) == psmAmount - _AMOUNT_TO_CONVERT);
+        assertTrue(
+            psm.balanceOf(address(virtualLP)) ==
+                _FUNDING_MIN_AMOUNT + _AMOUNT_TO_CONVERT
+        );
+        assertTrue(usdc.balanceOf(Bob) == usdcAmount + usdcSendAmount);
+        assertTrue(usdc.balanceOf(address(virtualLP)) == 0);
+    }
 
     ///////////// Portal functions ///////////
     // getUpdateAccount
@@ -320,6 +562,8 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(portal_USDC.portalEnergyTokenCreated() == true);
     }
 
+    // create_portalEnergyToken after token has been deployed
+
     // create_portalNFT
     function testSuccess_create_portalNFT() public {
         assertTrue(address(portal_USDC.portalNFT()) == address(0));
@@ -331,9 +575,26 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(portal_USDC.portalNFTcreated() == true);
     }
 
-    // -------- REVERTS ---------
-    // create_portalEnergyToken if token has been deployed
-    // create_portalNFT if token has been deployed
+    // create_portalNFT after token has been deployed
+
+    // mintPortalEnergyToken
+    function testRevert_mintPortalEnergyToken() public {
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        portal_USDC.mintPortalEnergyToken(address(0), 100);
+
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.mintPortalEnergyToken(Alice, 0);
+
+        vm.expectRevert(ErrorsLib.InsufficientBalance.selector);
+        portal_USDC.mintPortalEnergyToken(Alice, 1000);
+        vm.stopPrank();
+    }
+
+    ///////////////////////////////////
+    ///////////////////////////////////
+    ///////////////////////////////////
+    ///////////////////////////////////
 
     // unstake: amount 0
     // unstake: amount > user available to withdraw
@@ -365,7 +626,7 @@ contract PortalV2MultiAssetTest is Test {
     // redeemNFTposition: try redeem and ID that is not owned by the caller
 
     // =========== Positives:
-    // stake ERC20 -> update stake of user + global, send tokens to external protocol
+    // stake USDC -> update stake of user + global, send tokens to external protocol
     // ---> change _depositToYieldSource for this test -> simple deposit
     // stake ETH -> update stake of user + global, send tokens to external protocol
     // ---> change _depositToYieldSource for this test -> simple deposit
@@ -375,7 +636,7 @@ contract PortalV2MultiAssetTest is Test {
     // burnPortalEnergyToken -> increase recipient portalEnergy, burn PE tokens from caller
     // mintPortalEnergyToken -> reduce caller PE, mint PE tokens minus LP protection to recipient
     // quoteForceUnstakeAll -> return correct number
-    // forceUnstakeAll ERC20 only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
+    // forceUnstakeAll USDC only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
 
     // quoteBuyPortalEnergy -> return the correct number
     // quoteSellPortalEnergy -> return the correct number
