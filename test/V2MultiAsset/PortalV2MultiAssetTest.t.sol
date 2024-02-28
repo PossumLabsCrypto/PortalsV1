@@ -203,11 +203,36 @@ contract PortalV2MultiAssetTest is Test {
         virtualLP.activateLP();
     }
 
+    // Alice stakes 1 USDC into the Portal
+    function helper_stakeAliceUSDC() public {
+        helper_setApprovalsInLP_USDC();
+
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+        portal_USDC.stake(1e6);
+    }
+
+    // Increase allowance of tokens used by the USDC Portal
+    function helper_setApprovalsInLP_USDC() public {
+        virtualLP.increaseAllowanceDualStaking();
+        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
+        virtualLP.increaseAllowanceVault(address(portal_USDC));
+    }
+
+    // Increase allowance of tokens used by the ETH Portal
+    function helper_setApprovalsInLP_ETH() public {
+        virtualLP.increaseAllowanceDualStaking();
+        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
+        virtualLP.increaseAllowanceVault(address(portal_USDC));
+    }
+
+    // send USDC to LP when balance is required
     function helper_sendUSDCtoLP() public {
         vm.prank(usdcSender);
         usdc.transfer(address(virtualLP), usdcSendAmount); // Send 1k USDC to LP
     }
 
+    // simulate a full convert() cycle
     function helper_executeConvert() public {
         helper_sendUSDCtoLP();
         vm.startPrank(psmSender);
@@ -221,10 +246,28 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // ===================================
-    // ============= TESTS ===============
-    // ===================================
+    ////////////////////////////////////////////
     /////////////// LP functions ///////////////
+    ////////////////////////////////////////////
+
+    // registerPortal
+    function testRevert_registerPortal() public {
+        // caller is not owner
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
+        virtualLP.registerPortal(Alice, Bob, Karen, 23);
+        vm.stopPrank();
+    }
+
+    function testSuccess_registerPortal() public {
+        vm.prank(psmSender);
+        virtualLP.registerPortal(Alice, Bob, Karen, 23);
+
+        assertTrue(virtualLP.registeredPortals(Alice) == true);
+        assertTrue(virtualLP.vaults(Alice, Bob) == Karen);
+        assertTrue(virtualLP.poolID(Alice, Bob) == 23);
+    }
+
     // removeOwner
     function testRevert_removeOwner() public {
         // try before the timer has expired
@@ -247,6 +290,132 @@ contract PortalV2MultiAssetTest is Test {
 
         virtualLP.removeOwner();
         assertTrue(virtualLP.owner() == address(0));
+    }
+
+    ////////// INTEGRATION TESTING //////////////
+    // depositToYieldSource - Portal
+    // withdrawFromYieldSource - Portal
+    // claimProtocolRewards
+    // getProfitOfPortal
+    // collectProfitOfPortal
+    // getPendingRewardsUSDC
+    // getPortalVaultLockTime
+    // updatePortalBoostMultiplier
+    // increaseAllowanceVault
+    // increaseAllowanceSingleStaking
+    // increaseAllowanceDualStaking
+
+    // convert
+    function testRevert_convert_I() public {
+        // when LP is inactive
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InactiveLP.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            1,
+            block.timestamp
+        );
+        vm.stopPrank();
+    }
+
+    function testRevert_convert_II() public {
+        // after LP got activated
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+
+        vm.startPrank(Alice);
+
+        // wrong token address
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        virtualLP.convert(PSM_ADDRESS, msg.sender, 1, block.timestamp);
+
+        // wrong recipient address
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            address(0),
+            1,
+            block.timestamp
+        );
+
+        // wrong amount minReceived
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            0,
+            block.timestamp
+        );
+
+        // LP does not have enough tokens (balance is 0)
+        vm.expectRevert(ErrorsLib.InsufficientReceived.selector);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            msg.sender,
+            1e6,
+            block.timestamp
+        );
+
+        vm.stopPrank();
+    }
+
+    function testSuccess_convert() public {
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+        helper_sendUSDCtoLP();
+
+        vm.startPrank(Alice);
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.convert(
+            _PRINCIPAL_TOKEN_ADDRESS_USDC,
+            Bob,
+            usdcSendAmount,
+            block.timestamp
+        );
+        vm.stopPrank();
+
+        assertTrue(psm.balanceOf(Alice) == psmAmount - _AMOUNT_TO_CONVERT);
+        assertTrue(
+            psm.balanceOf(address(virtualLP)) ==
+                _FUNDING_MIN_AMOUNT + _AMOUNT_TO_CONVERT
+        );
+        assertTrue(usdc.balanceOf(Bob) == usdcAmount + usdcSendAmount);
+        assertTrue(usdc.balanceOf(address(virtualLP)) == 0);
+    }
+
+    // activateLP
+    function testRevert_activateLP_I() public {
+        // before funding phase has expired
+        vm.expectRevert(ErrorsLib.FundingPhaseOngoing.selector);
+        virtualLP.activateLP();
+
+        // before minimum funding amount was reached
+        vm.warp(fundingPhase);
+        vm.expectRevert(ErrorsLib.FundingInsufficient.selector);
+        virtualLP.activateLP();
+    }
+
+    function testRevert_activateLP_II() public {
+        // when LP is already active
+        helper_create_bToken();
+        helper_fundLP();
+        helper_activateLP();
+
+        vm.expectRevert(ErrorsLib.ActiveLP.selector);
+        virtualLP.activateLP();
+    }
+
+    function testSuccess_activateLP() public {
+        helper_create_bToken();
+        helper_fundLP();
+
+        vm.warp(fundingPhase);
+        virtualLP.activateLP();
+
+        assertTrue(virtualLP.isActiveLP());
     }
 
     // contributeFunding
@@ -286,6 +455,52 @@ contract PortalV2MultiAssetTest is Test {
         );
         assertTrue(psm.balanceOf(Alice) == psmAmount - fundingAmount);
         assertTrue(psm.balanceOf(address(virtualLP)) == fundingAmount);
+    }
+
+    // withdrawFunding
+    function testRevert_withdrawFunding() public {
+        helper_create_bToken();
+        helper_fundLP();
+
+        // amount zero
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        virtualLP.withdrawFunding(0);
+
+        // when LP is active
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.contributeFunding(1000);
+        helper_activateLP();
+
+        vm.expectRevert(ErrorsLib.ActiveLP.selector);
+        virtualLP.withdrawFunding(1000);
+
+        vm.stopPrank();
+    }
+
+    function testSuccess_withdrawFunding() public {
+        helper_create_bToken();
+
+        uint256 fundingAmount = 1e18 + 13; // add 13 to test for rounding
+        uint256 withdrawAmount = (fundingAmount *
+            virtualLP.FUNDING_MAX_RETURN_PERCENT()) / 1000; // withdraw 10% of the funded amount
+
+        vm.startPrank(Alice);
+        psm.approve(address(virtualLP), 1e55);
+        virtualLP.contributeFunding(fundingAmount);
+
+        IERC20 bToken = IERC20(address(virtualLP.bToken()));
+        bToken.approve(address(virtualLP), 1e55);
+        virtualLP.withdrawFunding(withdrawAmount);
+        vm.stopPrank();
+
+        assertTrue(bToken.balanceOf(Alice) == 9 * fundingAmount);
+        assertTrue(
+            psm.balanceOf(Alice) == psmAmount - (9 * fundingAmount) / 10 - 1
+        ); // -1 because of precision cutoff, Alice loses 1 WEI
+        assertTrue(
+            psm.balanceOf(address(virtualLP)) == (9 * fundingAmount) / 10 + 1
+        ); // +1 because of precision cutoff, the contract gains 1 WEI
     }
 
     // getBurnValuePSM
@@ -392,95 +607,126 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(bToken.balanceOf(Alice) == 9e18);
     }
 
-    // convert when LP is inactive
-    function testRevert_convert_I() public {
-        vm.startPrank(Alice);
-        vm.expectRevert(ErrorsLib.InactiveLP.selector);
-        virtualLP.convert(
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            msg.sender,
-            1,
-            block.timestamp
-        );
-        vm.stopPrank();
-    }
-
-    // convert after LP got activated
-    function testRevert_convert_II() public {
-        helper_create_bToken();
-        helper_fundLP();
-        helper_activateLP();
-
-        vm.startPrank(Alice);
-
-        // wrong token address
-        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
-        virtualLP.convert(PSM_ADDRESS, msg.sender, 1, block.timestamp);
-
-        // wrong recipient address
-        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
-        virtualLP.convert(
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            address(0),
-            1,
-            block.timestamp
-        );
-
-        // wrong amount minReceived
-        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
-        virtualLP.convert(
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            msg.sender,
-            0,
-            block.timestamp
-        );
-
-        // LP does not have enough tokens (balance is 0)
-        vm.expectRevert(ErrorsLib.InsufficientReceived.selector);
-        virtualLP.convert(
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            msg.sender,
-            1e6,
-            block.timestamp
-        );
-
-        vm.stopPrank();
-    }
-
-    // Successful convert
-    function testSuccess_convert() public {
-        helper_create_bToken();
-        helper_fundLP();
-        helper_activateLP();
-        helper_sendUSDCtoLP();
-
-        vm.startPrank(Alice);
-        psm.approve(address(virtualLP), 1e55);
-        virtualLP.convert(
-            _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            Bob,
-            usdcSendAmount,
-            block.timestamp
-        );
-        vm.stopPrank();
-
-        assertTrue(psm.balanceOf(Alice) == psmAmount - _AMOUNT_TO_CONVERT);
-        assertTrue(
-            psm.balanceOf(address(virtualLP)) ==
-                _FUNDING_MIN_AMOUNT + _AMOUNT_TO_CONVERT
-        );
-        assertTrue(usdc.balanceOf(Bob) == usdcAmount + usdcSendAmount);
-        assertTrue(usdc.balanceOf(address(virtualLP)) == 0);
-    }
-
+    //////////////////////////////////////////
     ///////////// Portal functions ///////////
+    //////////////////////////////////////////
+
     // getUpdateAccount
     function testRevert_getUpdateAccount() public {
         vm.startPrank(Alice);
-        // Try to simulate a withdrawal greater than the stake balance
+        // Try to simulate a withdrawal greater than the available balance
         vm.expectRevert(ErrorsLib.InsufficientToWithdraw.selector);
         portal_USDC.getUpdateAccount(Alice, 100, false);
         vm.stopPrank();
+    }
+
+    // Try again after integration testing
+    // function testSuccess_getUpdateAccount() public {
+    //     helper_create_bToken();
+    //     helper_fundLP();
+    //     helper_activateLP();
+    //     helper_registerPortalUSDC();
+
+    //     helper_stakeAliceUSDC();
+
+    //     vm.startPrank(Alice);
+    //     (
+    //         address user,
+    //         uint256 lastUpdateTime,
+    //         uint256 lastMaxLockDuration,
+    //         uint256 stakedBalance,
+    //         uint256 maxStakeDebt,
+    //         uint256 portalEnergy,
+    //         uint256 availableToWithdraw
+    //     ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+
+    //     assertTrue(user == Alice);
+    //     assertTrue(lastUpdateTime == block.timestamp);
+    //     assertTrue(lastMaxLockDuration == portal_USDC.maxLockDuration());
+    //     assertTrue(stakedBalance == 1e6);
+    //     assertTrue(
+    //         maxStakeDebt ==
+    //             (stakedBalance * maxLockDuration * 1e18) /
+    //                 (SECONDS_PER_YEAR * portal_USDC.DECIMALS_ADJUSTMENT())
+    //     );
+    //     assertTrue(portalEnergy == maxStakeDebt);
+    //     assertTrue(availableToWithdraw == 1e6);
+
+    //     vm.stopPrank();
+    // }
+
+    // stake
+    function testRevert_stake_I() public {
+        // before Portal was registered
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+        // Portal is not registered with the Virtual LP yet
+        vm.expectRevert(ErrorsLib.PortalNotRegistered.selector);
+        portal_USDC.stake(23450);
+        vm.stopPrank();
+    }
+
+    function testRevert_stake_II() public {
+        // after Portal was registered but not funded
+        helper_registerPortalUSDC();
+
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+
+        // Trying to stake zero tokens
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.stake(0);
+
+        // Sending ether with the function call using the USDC Portal
+        vm.expectRevert(ErrorsLib.NativeTokenNotAllowed.selector);
+        portal_USDC.stake{value: 100}(100);
+        vm.stopPrank();
+    }
+
+    function testRevert_stake_III() public {
+        // ETH with difference in input amount and message value
+        helper_registerPortalETH();
+
+        vm.startPrank(Alice);
+        // Sending zero ether value but positive input amount
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_ETH.stake{value: 0}(100);
+        vm.stopPrank();
+    }
+
+    // stake USDC -> update stake of user + global, send tokens to external protocol
+    // ---> change _depositToYieldSource for this test -> simple deposit
+    // stake ETH -> update stake of user + global, send tokens to external protocol
+    // ---> change _depositToYieldSource for this test -> simple deposit
+    // unstake -> update stake of user + global, withdraw tokens from external protocol + send to user
+    // ---> change _withdrawFromYieldSource for this test -> simple withdrawal with user as target
+
+    // unstake
+    // amount 0
+    // amount > user available to withdraw
+
+    // forceUnstakeAll
+    // user has more debt than PE tokens
+
+    // quoteForceUnstakeAll -> only Success
+
+    // create_portalNFT
+    function testRevert_create_portalNFT() public {
+        // after token has been deployed
+        portal_USDC.create_portalNFT();
+
+        vm.expectRevert(ErrorsLib.TokenExists.selector);
+        portal_USDC.create_portalNFT();
+    }
+
+    function testSuccess_create_portalNFT() public {
+        assertTrue(address(portal_USDC.portalNFT()) == address(0));
+        assertTrue(portal_USDC.portalNFTcreated() == false);
+
+        portal_USDC.create_portalNFT();
+
+        assertTrue(address(portal_USDC.portalNFT()) != address(0));
+        assertTrue(portal_USDC.portalNFTcreated() == true);
     }
 
     // mintNFTposition
@@ -497,61 +743,51 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // quoteBuyPortalEnergy - LP not yet funded, i.e. Reserve0 == 0 -> math error
+    // redeemNFTposition
+    // try redeem an ID that does not exist
+    // try redeem and ID that is not owned by the caller
+
+    // buyPortalEnergy
+    // amount 0
+    // minReceived 0
+    // recipient address(0)
+    // received amount < minReceived
+
+    // sellPortalEnergy
+    // amount 0
+    // minReceived 0
+    // recipient address(0)
+    // deadline expired
+    // caller has not enough portalEnergy balance
+    // received amount < minReceived
+
+    // quoteBuyPortalEnergy
     function testRevert_quoteBuyPortalEnergy() public {
+        // LP not yet funded, Reserve0 == 0 -> math error
         vm.startPrank(Alice);
         vm.expectRevert();
         portal_USDC.quoteBuyPortalEnergy(123456);
         vm.stopPrank();
     }
 
-    // quoteSellPortalEnergy - LP not yet funded, i.e. Reserve0 == 0 -> math error
+    // quoteSellPortalEnergy
     function testRevert_quoteSellPortalEnergy() public {
+        // LP not yet funded, Reserve0 == 0 -> math error
         vm.startPrank(Alice);
         vm.expectRevert();
         portal_USDC.quoteSellPortalEnergy(123456);
         vm.stopPrank();
     }
 
-    // stake before Portal was registered
-    function testRevert_stake_I() public {
-        vm.startPrank(Alice);
-        usdc.approve(address(portal_USDC), 1e55);
-        // Portal is not registered with the Virtual LP yet
-        vm.expectRevert(ErrorsLib.PortalNotRegistered.selector);
-        portal_USDC.stake(23450);
-        vm.stopPrank();
-    }
-
-    // stake after Portal was registered but not funded
-    function testRevert_stake_II() public {
-        helper_registerPortalUSDC();
-
-        vm.startPrank(Alice);
-        usdc.approve(address(portal_USDC), 1e55);
-
-        // Trying to stake zero tokens
-        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
-        portal_USDC.stake(0);
-
-        // Sending ether with the function call using the USDC Portal
-        vm.expectRevert(ErrorsLib.NativeTokenNotAllowed.selector);
-        portal_USDC.stake{value: 100}(100);
-        vm.stopPrank();
-    }
-
-    // stake ETH with difference in input amount and message value
-    function testRevert_stake_III() public {
-        helper_registerPortalETH();
-
-        vm.startPrank(Alice);
-        // Sending zero ether value but positive input amount
-        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
-        portal_ETH.stake{value: 0}(100);
-        vm.stopPrank();
-    }
-
     // create_portalEnergyToken
+    function testRevert_create_portalEnergyToken() public {
+        // Try to deploy twice
+        portal_USDC.create_portalEnergyToken();
+
+        vm.expectRevert(ErrorsLib.TokenExists.selector);
+        portal_USDC.create_portalEnergyToken();
+    }
+
     function testSuccess_create_portalEnergyToken() public {
         assertTrue(address(portal_USDC.portalEnergyToken()) == address(0));
         assertTrue(portal_USDC.portalEnergyTokenCreated() == false);
@@ -560,82 +796,43 @@ contract PortalV2MultiAssetTest is Test {
 
         assertTrue(address(portal_USDC.portalEnergyToken()) != address(0));
         assertTrue(portal_USDC.portalEnergyTokenCreated() == true);
+        assertEq(portal_USDC.portalEnergyToken().name(), "PE-USD Coin"); // This implicitely tests concatenate()
+        assertEq(portal_USDC.portalEnergyToken().symbol(), "PE-USDC"); // This implicitely tests concatenate()
     }
 
-    // create_portalEnergyToken after token has been deployed
+    // burnPortalEnergyToken
+    // amount 0
+    // recipient address(0)
+    function testRevert_burnPortalEnergyToken() public {}
 
-    // create_portalNFT
-    function testSuccess_create_portalNFT() public {
-        assertTrue(address(portal_USDC.portalNFT()) == address(0));
-        assertTrue(portal_USDC.portalNFTcreated() == false);
-
-        portal_USDC.create_portalNFT();
-
-        assertTrue(address(portal_USDC.portalNFT()) != address(0));
-        assertTrue(portal_USDC.portalNFTcreated() == true);
-    }
-
-    // create_portalNFT after token has been deployed
+    // POSITIVE -> increase recipient portalEnergy, burn PE tokens from caller
+    function testSuccess_burnPortalEnergyToken() public {}
 
     // mintPortalEnergyToken
     function testRevert_mintPortalEnergyToken() public {
+        //recipient address(0)
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.InvalidAddress.selector);
         portal_USDC.mintPortalEnergyToken(address(0), 100);
 
+        // amount 0
         vm.expectRevert(ErrorsLib.InvalidAmount.selector);
         portal_USDC.mintPortalEnergyToken(Alice, 0);
 
+        // caller has not enough portal energy to mint amount
         vm.expectRevert(ErrorsLib.InsufficientBalance.selector);
         portal_USDC.mintPortalEnergyToken(Alice, 1000);
         vm.stopPrank();
     }
 
+    // POSITIVE -> reduce caller PE, mint PE tokens minus LP protection to recipient
+    // function testSuccess_mintPortalEnergyToken() public {}
+
     ///////////////////////////////////
     ///////////////////////////////////
     ///////////////////////////////////
     ///////////////////////////////////
 
-    // unstake: amount 0
-    // unstake: amount > user available to withdraw
-
-    // mintPortalEnergyToken: amount 0
-    // mintPortalEnergyToken: recipient address(0)
-    // mintPortalEnergyToken: caller has not enough portal energy to mint amount
-    // forceUnstakeAll: user did not give spending approval
-    // forceUnstakeAll: user has more debt than PE tokens
-
-    // buyPortalEnergy: amount 0
-    // buyPortalEnergy: minReceived 0
-    // buyPortalEnergy: recipient address(0)
-    // buyPortalEnergy: deadline expired
-    // buyPortalEnergy: received amount < minReceived
-    // sellPortalEnergy: amount 0
-    // sellPortalEnergy: minReceived 0
-    // sellPortalEnergy: recipient address(0)
-    // sellPortalEnergy: deadline expired
-    // sellPortalEnergy: caller has not enough portalEnergy balance
-    // sellPortalEnergy: received amount < minReceived
-
-    // burnPortalEnergyToken: amount 0
-    // burnPortalEnergyToken: recipient address(0)
-
-    // mintNFTposition: recipient = address(0)
-    // mintNFTposition: user with empty account (no PE & no stake)
-    // redeemNFTposition: try redeem an ID that does not exist
-    // redeemNFTposition: try redeem and ID that is not owned by the caller
-
-    // =========== Positives:
-    // stake USDC -> update stake of user + global, send tokens to external protocol
-    // ---> change _depositToYieldSource for this test -> simple deposit
-    // stake ETH -> update stake of user + global, send tokens to external protocol
-    // ---> change _depositToYieldSource for this test -> simple deposit
-    // unstake -> update stake of user + global, withdraw tokens from external protocol + send to user
-    // ---> change _withdrawFromYieldSource for this test -> simple withdrawal with user as target
-
-    // burnPortalEnergyToken -> increase recipient portalEnergy, burn PE tokens from caller
-    // mintPortalEnergyToken -> reduce caller PE, mint PE tokens minus LP protection to recipient
-    // quoteForceUnstakeAll -> return correct number
     // forceUnstakeAll USDC only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
 
     // quoteBuyPortalEnergy -> return the correct number

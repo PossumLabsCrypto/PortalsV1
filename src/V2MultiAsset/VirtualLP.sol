@@ -191,7 +191,7 @@ contract VirtualLP is ReentrancyGuard {
 
     /// @notice Function to add new Portals to the registry
     /// @dev Add new Portals to the registry. Portals can only be added, never removed
-    /// @dev Only callable by owner to prevent malicious Portals
+    /// @dev Only callable by owner to prevent malicious interactions
     /// @dev Function can override existing registries to fix potential integration errors
     /// @param _portal The address of the Portal to register
     /// @param _asset The address of the principal token of the Portal
@@ -237,7 +237,7 @@ contract VirtualLP is ReentrancyGuard {
         address _asset,
         uint256 _amount
     ) external registeredPortal {
-        /// @dev Check that timeLock is zero to protect stakers from griefing attack
+        /// @dev Check that the withdraw timeLock is zero to protect stakers from griefing attack
         if (IWater(vaults[msg.sender][_asset]).lockTime() > 0) {
             revert TimeLockActive();
         }
@@ -619,20 +619,21 @@ contract VirtualLP is ReentrancyGuard {
     }
 
     /// @notice Allow users to burn bTokens to recover PSM funding before the Virtual LP is activated
-    /// @dev This function allows users to withdraw PSM tokens during the funding phase of the contract
+    /// @dev This function allows users to burn bTokens during the funding phase of the contract to get back PSM
     /// @dev The bToken must have been deployed via the contract in advance
     /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
     /// @dev Burn the appropriate amount of bTokens from the caller
     /// @dev Transfer the PSM tokens from the contract to the caller
-    /// @param _amount The amount of bTokens burned to withdraw PSM
-    function withdrawFunding(uint256 _amount) external inactiveLP {
+    /// @param _amountBtoken The amount of bTokens burned to withdraw PSM
+    function withdrawFunding(uint256 _amountBtoken) external inactiveLP {
         /// @dev Prevent zero amount transaction
-        if (_amount == 0) {
+        if (_amountBtoken == 0) {
             revert InvalidAmount();
         }
 
         /// @dev Calculate the amount of PSM returned to the user
-        uint256 withdrawAmount = (_amount * 100) / FUNDING_MAX_RETURN_PERCENT;
+        uint256 withdrawAmount = (_amountBtoken * 100) /
+            FUNDING_MAX_RETURN_PERCENT;
 
         /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
         fundingBalance -= withdrawAmount;
@@ -641,7 +642,7 @@ contract VirtualLP is ReentrancyGuard {
         IERC20(PSM_ADDRESS).transfer(msg.sender, withdrawAmount);
 
         /// @dev Burn bTokens from the user
-        bToken.burnFrom(msg.sender, _amount);
+        bToken.burnFrom(msg.sender, _amountBtoken);
 
         /// @dev Emit the FundingReceived event with the user address and the mintable amount
         emit FundingWithdrawn(msg.sender, withdrawAmount);

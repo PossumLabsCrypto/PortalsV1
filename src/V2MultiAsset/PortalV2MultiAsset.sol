@@ -88,8 +88,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
     uint256 constant TERMINAL_MAX_LOCK_DURATION = 157680000; // terminal maximum lock duration of a user´s stake in seconds (5y)
     uint256 constant SECONDS_PER_YEAR = 31536000; // seconds in a 365 day year
-    uint256 immutable CREATION_TIME; // time stamp of deployment
-    uint256 immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
+
+    uint256 public immutable CREATION_TIME; // time stamp of deployment
+    uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
 
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
@@ -321,8 +322,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     function stake(uint256 _amount) external payable nonReentrant {
         /// @dev Convert native ETH to WETH for contract, then send to LP
         /// @dev This section must sit before using _amount elsewhere to guarantee consistency
+        /// @dev This knowingly deviates from the CEI pattern
         if (PRINCIPAL_TOKEN_ADDRESS == address(0)) {
-            // Wrap ETH into WETH
+            /// @dev Wrap ETH into WETH received by the contract
             _amount = msg.value;
             IWETH(WETH_ADDRESS).deposit{value: _amount}();
 
