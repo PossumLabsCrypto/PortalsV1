@@ -104,10 +104,11 @@ contract VirtualLP is ReentrancyGuard {
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
 
-    address constant SINGLE_STAKING =
+    address public constant SINGLE_STAKING =
         0x314223E2fA375F972E159002Eb72A96301E99e22;
-    address constant DUAL_STAKING = 0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
-    address constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
+    address public constant DUAL_STAKING =
+        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
+    address public constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     bool public isActiveLP; // Will be set to true when funding phase ends
     bool public bTokenCreated; // flag for bToken deployment

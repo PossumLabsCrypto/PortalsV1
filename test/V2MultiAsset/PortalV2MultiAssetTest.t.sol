@@ -8,19 +8,34 @@ import {VirtualLP} from "src/V2MultiAsset/VirtualLP.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IWater} from "src/V2MultiAsset/interfaces/IWater.sol";
+import {ISingleStaking} from "src/V2MultiAsset/interfaces/ISingleStaking.sol";
+import {IDualStaking} from "src/V2MultiAsset/interfaces/IDualStaking.sol";
+import {IPortalV2MultiAsset} from "src/V2MultiAsset/interfaces/IPortalV2MultiAsset.sol";
 
 contract PortalV2MultiAssetTest is Test {
     // External token addresses
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address public constant PSM_ADDRESS =
         0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
-    address private constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
+    address constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
 
     // Vaultka staking contracts
-    address private constant SINGLE_STAKING =
+    address constant SINGLE_STAKING =
         0x314223E2fA375F972E159002Eb72A96301E99e22;
-    address private constant DUAL_STAKING =
-        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
+    address constant DUAL_STAKING = 0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
+
+    uint256 constant _POOL_ID_USDC = 5;
+    uint256 constant _POOL_ID_WETH = 10;
+
+    address private constant USDC_WATER =
+        0x9045ae36f963b7184861BDce205ea8B08913B48c;
+    address private constant WETH_WATER =
+        0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
+
+    address private constant _PRINCIPAL_TOKEN_ADDRESS_USDC =
+        0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address private constant _PRINCIPAL_TOKEN_ADDRESS_ETH = address(0);
 
     // General constants
     uint256 constant _TERMINAL_MAX_LOCK_DURATION = 157680000;
@@ -29,23 +44,11 @@ contract PortalV2MultiAssetTest is Test {
     uint256 private constant OWNER_DURATION = 31536000; // 1 Year
 
     // Portal Constructor values
-    uint256 constant _TARGET_CONSTANT_USDC = 1101321585903080 * 1e18;
-    uint256 constant _TARGET_CONSTANT_WETH = 423076988165 * 1e18;
+    uint256 constant _TARGET_CONSTANT_USDC = 440528634361 * 1e36;
+    uint256 constant _TARGET_CONSTANT_WETH = 125714213 * 1e36;
 
     uint256 constant _FUNDING_PHASE_DURATION = 604800; // 7 days
     uint256 constant _FUNDING_MIN_AMOUNT = 1e25; // 10M PSM
-
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_USDC =
-        0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
-    address private constant _PRINCIPAL_TOKEN_ADDRESS_ETH = address(0);
-
-    address private constant USDC_WATER =
-        0x9045ae36f963b7184861BDce205ea8B08913B48c;
-    address private constant WETH_WATER =
-        0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
-
-    uint256 constant _POOL_ID_USDC = 5;
-    uint256 constant _POOL_ID_WETH = 10;
 
     uint256 constant _DECIMALS = 18;
     uint256 constant _DECIMALS_USDC = 6;
@@ -157,43 +160,23 @@ contract PortalV2MultiAssetTest is Test {
 
     // Register USDC Portal
     function helper_registerPortalUSDC() public {
-        address vaultAddress = virtualLP.vaults(
-            address(portal_USDC),
-            _PRINCIPAL_TOKEN_ADDRESS_USDC
-        );
-        uint256 pid = virtualLP.poolID(
-            address(portal_USDC),
-            _PRINCIPAL_TOKEN_ADDRESS_USDC
-        );
-
-        // register USDC Portal
         vm.prank(psmSender);
         virtualLP.registerPortal(
             address(portal_USDC),
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            vaultAddress,
-            pid
+            USDC_WATER,
+            _POOL_ID_USDC
         );
     }
 
     // Register ETH Portal
     function helper_registerPortalETH() public {
-        address vaultAddress = virtualLP.vaults(
-            address(portal_ETH),
-            _PRINCIPAL_TOKEN_ADDRESS_ETH
-        );
-        uint256 pid = virtualLP.poolID(
-            address(portal_ETH),
-            _PRINCIPAL_TOKEN_ADDRESS_ETH
-        );
-
-        // register Portal
         vm.prank(psmSender);
         virtualLP.registerPortal(
             address(portal_ETH),
             _PRINCIPAL_TOKEN_ADDRESS_ETH,
-            vaultAddress,
-            pid
+            WETH_WATER,
+            _POOL_ID_WETH
         );
     }
 
@@ -201,6 +184,14 @@ contract PortalV2MultiAssetTest is Test {
     function helper_activateLP() public {
         vm.warp(fundingPhase);
         virtualLP.activateLP();
+    }
+
+    function helper_prepareSystem() public {
+        helper_create_bToken();
+        helper_fundLP();
+        helper_registerPortalETH();
+        helper_registerPortalUSDC();
+        helper_activateLP();
     }
 
     // Alice stakes 1 USDC into the Portal
@@ -293,8 +284,64 @@ contract PortalV2MultiAssetTest is Test {
     }
 
     ////////// INTEGRATION TESTING //////////////
-    // depositToYieldSource - Portal
-    // withdrawFromYieldSource - Portal
+    //depositToYieldSource
+    function testRevert_depositToYieldSource() public {
+        helper_prepareSystem();
+        uint256 amount = 1e7;
+
+        vm.startPrank(address(portal_USDC));
+        usdc.approve(address(virtualLP), 1e55);
+
+        vm.expectRevert(); // missing approvals in the LP to handle Vault Shares
+        virtualLP.depositToYieldSource(address(usdc), amount);
+
+        vm.expectRevert(); // wrong token address
+        virtualLP.depositToYieldSource(Alice, amount);
+
+        vm.expectRevert("VALUE_0"); // zero amount
+        virtualLP.depositToYieldSource(address(usdc), 0);
+        vm.stopPrank();
+
+        // unregistered caller
+        vm.startPrank(Alice);
+        usdc.approve(address(virtualLP), 1e55);
+
+        vm.expectRevert(ErrorsLib.PortalNotRegistered.selector);
+        virtualLP.depositToYieldSource(address(usdc), amount);
+        vm.stopPrank();
+    }
+
+    function testSuccess_depositToYieldSource() public {
+        helper_prepareSystem();
+        uint256 amount = 1e7;
+
+        vm.prank(usdcSender);
+        usdc.transfer(address(portal_USDC), amount);
+        assertTrue(usdc.balanceOf(address(portal_USDC)) == amount);
+
+        vm.startPrank(address(portal_USDC));
+        // send USDC from Portal to LP -> equals calling stake() in the Portal
+        usdc.transfer(address(virtualLP), amount);
+
+        usdc.approve(address(virtualLP), 1e55);
+        virtualLP.increaseAllowanceVault(address(portal_USDC));
+        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
+        virtualLP.increaseAllowanceDualStaking();
+
+        virtualLP.depositToYieldSource(address(usdc), amount);
+        vm.stopPrank();
+
+        // Check that stake was processed correctly in Vault and staking contract
+        uint256 depositShares = IWater(USDC_WATER).convertToShares(amount);
+        uint256 stakedShares = ISingleStaking(SINGLE_STAKING).getUserAmount(
+            _POOL_ID_USDC,
+            address(virtualLP)
+        );
+        assertEq(usdc.balanceOf(address(portal_USDC)), 0);
+        assertEq(depositShares, stakedShares);
+    }
+
+    // withdrawFromYieldSource
     // claimProtocolRewards
     // getProfitOfPortal
     // collectProfitOfPortal
@@ -702,13 +749,38 @@ contract PortalV2MultiAssetTest is Test {
     // ---> change _withdrawFromYieldSource for this test -> simple withdrawal with user as target
 
     // unstake
-    // amount 0
-    // amount > user available to withdraw
+    function testRevert_unstake() public {
+        helper_prepareSystem();
+
+        // amount 0
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.unstake(0);
+
+        // amount > user available to withdraw
+        vm.expectRevert(ErrorsLib.InsufficientToWithdraw.selector);
+        portal_USDC.unstake(1000);
+        vm.stopPrank();
+
+        // vm.startPrank(psmSender);
+        // psm.approve(address(portal_USDC), 1e55);
+        // portal_USDC.buyPortalEnergy(Alice, 1e18, 1, hundredYearsLater);
+        // vm.stopPrank();
+
+        // vm.startPrank(Alice);
+        // // amount > user staked balance
+        // vm.expectRevert(ErrorsLib.InsufficientStakeBalance.selector);
+        // portal_USDC.unstake(1000);
+
+        // vm.stopPrank();
+    }
+
+    // SUCCESS
 
     // forceUnstakeAll
     // user has more debt than PE tokens
 
-    // quoteForceUnstakeAll -> only Success
+    // quoteForceUnstakeAll -> only Success -> testable only after successful stake
 
     // create_portalNFT
     function testRevert_create_portalNFT() public {
@@ -748,18 +820,84 @@ contract PortalV2MultiAssetTest is Test {
     // try redeem and ID that is not owned by the caller
 
     // buyPortalEnergy
-    // amount 0
-    // minReceived 0
-    // recipient address(0)
-    // received amount < minReceived
+    function testRevert_buyPortalEnergy() public {
+        helper_prepareSystem();
+        // amount 0
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.buyPortalEnergy(Alice, 0, 1, block.timestamp);
+
+        // minReceived 0
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.buyPortalEnergy(Alice, 1e18, 0, block.timestamp);
+
+        // recipient address(0)
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        portal_USDC.buyPortalEnergy(address(0), 1e18, 1, block.timestamp);
+
+        // received amount < minReceived
+        vm.expectRevert(ErrorsLib.InsufficientReceived.selector);
+        portal_USDC.buyPortalEnergy(Alice, 1e18, 1e33, block.timestamp);
+    }
+
+    function testSuccess_buyPortalEnergy() public {
+        helper_prepareSystem();
+
+        uint256 portalEnergy;
+        (, , , , , portalEnergy, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
+        console2.log(portalEnergy);
+
+        vm.startPrank(Alice);
+        psm.approve(address(portal_USDC), 1e55);
+        portal_USDC.buyPortalEnergy(Alice, 1e18, 1, block.timestamp);
+        vm.stopPrank();
+
+        (, , , , , portalEnergy, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
+        console2.log(portalEnergy);
+
+        uint256 reserve1 = _TARGET_CONSTANT_USDC / _FUNDING_MIN_AMOUNT;
+        uint256 netPSMinput = (1e18 * 99) / 100;
+        uint256 result = (netPSMinput * reserve1) /
+            (netPSMinput + _FUNDING_MIN_AMOUNT);
+
+        assertEq(portalEnergy, result);
+        console2.log(result);
+    }
 
     // sellPortalEnergy
-    // amount 0
-    // minReceived 0
-    // recipient address(0)
-    // deadline expired
-    // caller has not enough portalEnergy balance
-    // received amount < minReceived
+    function testRevert_sellPortalEnergy() public {
+        helper_prepareSystem();
+        // amount 0
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.sellPortalEnergy(Alice, 0, 1, block.timestamp);
+
+        // minReceived 0
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.sellPortalEnergy(Alice, 1e18, 0, block.timestamp);
+
+        // recipient address(0)
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        portal_USDC.sellPortalEnergy(address(0), 1e18, 1, block.timestamp);
+
+        // sold amount > caller balance
+        vm.expectRevert(ErrorsLib.InsufficientBalance.selector);
+        portal_USDC.sellPortalEnergy(Alice, 1e18, 1e33, block.timestamp);
+
+        // // received amount < minReceived
+        // vm.expectRevert(ErrorsLib.InsufficientReceived.selector);
+        // portal_USDC.sellPortalEnergy(Alice, 1e18, 1e33, block.timestamp);
+    }
+
+    // function testSuccess_sellPortalEnergy() public {}
 
     // quoteBuyPortalEnergy
     function testRevert_quoteBuyPortalEnergy() public {
@@ -769,6 +907,8 @@ contract PortalV2MultiAssetTest is Test {
         portal_USDC.quoteBuyPortalEnergy(123456);
         vm.stopPrank();
     }
+
+    function testSuccess_quoteBuyPortalEnergy() public {}
 
     // quoteSellPortalEnergy
     function testRevert_quoteSellPortalEnergy() public {
@@ -801,15 +941,31 @@ contract PortalV2MultiAssetTest is Test {
     }
 
     // burnPortalEnergyToken
-    // amount 0
-    // recipient address(0)
-    function testRevert_burnPortalEnergyToken() public {}
+    function testRevert_burnPortalEnergyToken() public {
+        portal_USDC.create_portalEnergyToken();
 
-    // POSITIVE -> increase recipient portalEnergy, burn PE tokens from caller
-    function testSuccess_burnPortalEnergyToken() public {}
+        //recipient address(0)
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InvalidAddress.selector);
+        portal_USDC.burnPortalEnergyToken(address(0), 100);
+
+        // amount 0
+        vm.expectRevert(ErrorsLib.InvalidAmount.selector);
+        portal_USDC.burnPortalEnergyToken(Alice, 0);
+
+        // caller has not enough Portal Energy Tokens
+        vm.expectRevert(); // error from trying to burn tokens that don´t exist
+        portal_USDC.burnPortalEnergyToken(Alice, 1000);
+        vm.stopPrank();
+    }
+
+    // SUCCESS
+    // function testSuccess_burnPortalEnergyToken() public {}
 
     // mintPortalEnergyToken
     function testRevert_mintPortalEnergyToken() public {
+        portal_USDC.create_portalEnergyToken();
+
         //recipient address(0)
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.InvalidAddress.selector);
@@ -825,8 +981,8 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // POSITIVE -> reduce caller PE, mint PE tokens minus LP protection to recipient
-    // function testSuccess_mintPortalEnergyToken() public {}
+    // SUCCESS
+    // testSuccess_mintPortalEnergyToken() public {}
 
     ///////////////////////////////////
     ///////////////////////////////////

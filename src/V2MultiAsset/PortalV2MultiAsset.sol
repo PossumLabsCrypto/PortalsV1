@@ -610,17 +610,17 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev Increase the portalEnergy of the recipient by the amount of portalEnergy received
     /// @dev Transfer the PSM tokens from the caller to the contract
     /// @param _recipient The recipient of the Portal Energy credit
-    /// @param _amountInput The amount of PSM tokens to sell
+    /// @param _amountInputPSM The amount of PSM tokens to sell
     /// @param _minReceived The minimum amount of portalEnergy to receive
     /// @param _deadline The unix timestamp that marks the deadline for order execution
     function buyPortalEnergy(
         address _recipient,
-        uint256 _amountInput,
+        uint256 _amountInputPSM,
         uint256 _minReceived,
         uint256 _deadline
     ) external nonReentrant {
         /// @dev Check that the input amount & minimum received is greater than zero
-        if (_amountInput == 0 || _minReceived == 0) {
+        if (_amountInputPSM == 0 || _minReceived == 0) {
             revert InvalidAmount();
         }
 
@@ -635,7 +635,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         /// @dev Get the amount of portalEnergy received based on the amount of PSM tokens sold
-        uint256 amountReceived = quoteBuyPortalEnergy(_amountInput);
+        uint256 amountReceived = quoteBuyPortalEnergy(_amountInputPSM);
 
         /// @dev Check that the amount of portalEnergy received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
@@ -646,7 +646,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         accounts[_recipient].portalEnergy += amountReceived;
 
         /// @dev Transfer the PSM tokens from the caller to the Virtual LP
-        IERC20(PSM_ADDRESS).transferFrom(msg.sender, VIRTUAL_LP, _amountInput);
+        IERC20(PSM_ADDRESS).transferFrom(
+            msg.sender,
+            VIRTUAL_LP,
+            _amountInputPSM
+        );
 
         /// @dev Emit the portalEnergyBuyExecuted event
         emit PortalEnergyBuyExecuted(msg.sender, _recipient, amountReceived);
@@ -657,16 +661,18 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev Get the output amount from the quote function
     /// @dev Reduce the portalEnergy balance of the caller by the amount of portalEnergy sold
     /// @dev Send PSM to the recipient
-    /// @param _amountInput The amount of portalEnergy to sell
-    /// @param _minReceived The minimum amount of PSM tokens to receive
+    /// @param _recipient The recipient of the PSM tokens
+    /// @param _amountInputPE The amount of Portal Energy to sell
+    /// @param _minReceived The minimum amount of PSM to receive
+    /// @param _deadline The unix timestamp that marks the deadline for order execution
     function sellPortalEnergy(
         address _recipient,
-        uint256 _amountInput,
+        uint256 _amountInputPE,
         uint256 _minReceived,
         uint256 _deadline
     ) external nonReentrant {
         /// @dev Check that the input amount & minimum received is greater than zero
-        if (_amountInput == 0 || _minReceived == 0) {
+        if (_amountInputPE == 0 || _minReceived == 0) {
             revert InvalidAmount();
         }
 
@@ -692,12 +698,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         ) = getUpdateAccount(msg.sender, 0, true);
 
         /// @dev Require that the user has enough portalEnergy to sell
-        if (portalEnergy < _amountInput) {
+        if (portalEnergy < _amountInputPE) {
             revert InsufficientBalance();
         }
 
         /// @dev Calculate the amount of output token received based on the amount of portalEnergy sold
-        uint256 amountReceived = quoteSellPortalEnergy(_amountInput);
+        uint256 amountReceived = quoteSellPortalEnergy(_amountInputPE);
 
         /// @dev Check that the amount of output token received is greater than or equal to the minimum expected output
         if (amountReceived < _minReceived) {
@@ -705,7 +711,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         /// @dev Calculate the user post-trade Portal Energy balance
-        portalEnergy -= _amountInput;
+        portalEnergy -= _amountInputPE;
 
         /// @dev Update the user stake struct
         _updateAccount(user, stakedBalance, maxStakeDebt, portalEnergy);
@@ -714,15 +720,16 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         virtualLP.PSM_sendToPortalUser(_recipient, amountReceived);
 
         /// @dev Emit the portalEnergySellExecuted event
-        emit PortalEnergySellExecuted(msg.sender, _recipient, _amountInput);
+        emit PortalEnergySellExecuted(msg.sender, _recipient, _amountInputPE);
     }
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
     /// @dev Update the token reserves to get the exchange price
+    /// @param _amountInputPSM The amount of PSM tokens sold
     /// @return amountReceived The amount of portalEnergy received by the recipient
     function quoteBuyPortalEnergy(
-        uint256 _amountInput
+        uint256 _amountInputPSM
     ) public view returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
@@ -731,18 +738,23 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 reserve1 = CONSTANT_PRODUCT / reserve0;
 
         /// @dev Reduce amount by the LP Protection Hurdle to prevent sandwich attacks
-        _amountInput = (_amountInput * (1 - LP_PROTECTION_HURDLE)) / 100;
+        _amountInputPSM =
+            (_amountInputPSM * (100 - LP_PROTECTION_HURDLE)) /
+            100;
 
         /// @dev Calculate the amount of portalEnergy received based on the amount of PSM tokens sold
-        amountReceived = (_amountInput * reserve1) / (_amountInput + reserve0);
+        amountReceived =
+            (_amountInputPSM * reserve1) /
+            (_amountInputPSM + reserve0);
     }
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
     /// @dev Update the token reserves to get the exchange price
+    /// @param _amountInputPE The amount of Portal Energy sold
     /// @return amountReceived The amount of PSM tokens received by the recipient
     function quoteSellPortalEnergy(
-        uint256 _amountInput
+        uint256 _amountInputPE
     ) public view returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
         uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
@@ -754,7 +766,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             : CONSTANT_PRODUCT / reserve0;
 
         /// @dev Calculate the amount of PSM tokens received based on the amount of portalEnergy sold
-        amountReceived = (_amountInput * reserve0) / (_amountInput + reserve1);
+        amountReceived =
+            (_amountInputPE * reserve0) /
+            (_amountInputPE + reserve1);
     }
 
     // ============================================
