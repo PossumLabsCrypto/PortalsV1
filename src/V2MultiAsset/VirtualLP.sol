@@ -11,6 +11,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+interface IWETH {
+    function withdrawTo(address _account, uint256 _amount) external;
+}
+
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
@@ -287,37 +291,27 @@ contract VirtualLP is ReentrancyGuard {
             withdrawShares
         );
 
-        /// @dev Check if handling native ETH
+        /// @dev Check if handling ETH, withdraw as WETH
+        address tokenAdr = (_asset == address(0)) ? WETH_ADDRESS : _asset;
+
+        /// @dev Withdraw the staked assets from Vault
+        balanceBefore = IERC20(tokenAdr).balanceOf(address(this));
+        IWater(vaults[msg.sender][_asset]).withdraw(
+            withdrawAssets,
+            address(this),
+            address(this)
+        );
+        balanceAfter = IERC20(tokenAdr).balanceOf(address(this));
+
+        /// @dev Sanity check on obtained amount from Vault
+        _amount = balanceAfter - balanceBefore;
+
+        /// @dev Transfer the obtained assets to the user
+        /// @dev Convert WETH to ETH before sending
         if (_asset == address(0)) {
-            /// @dev Withdraw the staked ETH from Vault
-            balanceBefore = address(this).balance;
-            IWater(vaults[msg.sender][_asset]).withdrawETH(withdrawAssets);
-            balanceAfter = address(this).balance;
-
-            /// @dev Sanity check on obtained amount from Vault
-            _amount = balanceAfter - balanceBefore;
-
-            /// @dev Transfer the obtained ETH to the user
-            (bool sent, ) = payable(_user).call{value: _amount}("");
-            if (!sent) {
-                revert FailedToSendNativeToken();
-            }
+            IWETH(WETH_ADDRESS).withdrawTo(_user, _amount);
         } else {
-            /// @dev If handling ERC20 token
-            /// @dev Withdraw the staked assets from Vault
-            balanceBefore = IERC20(_asset).balanceOf(address(this));
-            IWater(vaults[msg.sender][_asset]).withdraw(
-                withdrawAssets,
-                address(this),
-                address(this)
-            );
-            balanceAfter = IERC20(_asset).balanceOf(address(this));
-
-            /// @dev Sanity check on obtained amount from Vault
-            _amount = balanceAfter - balanceBefore;
-
-            /// @dev Transfer the obtained assets to the user
-            IERC20(_asset).safeTransfer(_user, _amount);
+            IERC20(tokenAdr).safeTransfer(_user, _amount);
         }
     }
 

@@ -194,15 +194,6 @@ contract PortalV2MultiAssetTest is Test {
         helper_activateLP();
     }
 
-    // Alice stakes 1 USDC into the Portal
-    function helper_stakeAliceUSDC() public {
-        helper_setApprovalsInLP_USDC();
-
-        vm.startPrank(Alice);
-        usdc.approve(address(portal_USDC), 1e55);
-        portal_USDC.stake(1e6);
-    }
-
     // Increase allowance of tokens used by the USDC Portal
     function helper_setApprovalsInLP_USDC() public {
         virtualLP.increaseAllowanceDualStaking();
@@ -213,8 +204,8 @@ contract PortalV2MultiAssetTest is Test {
     // Increase allowance of tokens used by the ETH Portal
     function helper_setApprovalsInLP_ETH() public {
         virtualLP.increaseAllowanceDualStaking();
-        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
-        virtualLP.increaseAllowanceVault(address(portal_USDC));
+        virtualLP.increaseAllowanceSingleStaking(address(portal_ETH));
+        virtualLP.increaseAllowanceVault(address(portal_ETH));
     }
 
     // send USDC to LP when balance is required
@@ -320,7 +311,7 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(usdc.balanceOf(address(portal_USDC)) == amount);
 
         vm.startPrank(address(portal_USDC));
-        // send USDC from Portal to LP -> equals calling stake() in the Portal
+        // send USDC from Portal to LP -> simulates calling stake() in the Portal
         usdc.transfer(address(virtualLP), amount);
 
         usdc.approve(address(virtualLP), 1e55);
@@ -342,15 +333,87 @@ contract PortalV2MultiAssetTest is Test {
     }
 
     // withdrawFromYieldSource
+    // No revert testing because inputs come from the Portal which follows a hard coded structure
+    // Cannot fail if it was setup correctly and if the underlying protocol doesn´t change
+    function testSuccess_withdrawFromYieldSource() public {
+        uint256 amount = 1e7;
+        testSuccess_depositToYieldSource();
+
+        uint256 balanceAliceStart = usdc.balanceOf(Alice);
+        uint256 time = block.timestamp;
+        vm.warp(time + 100);
+
+        uint256 withdrawShares = IWater(USDC_WATER).convertToShares(amount);
+        uint256 grossReceived = IWater(USDC_WATER).convertToAssets(
+            withdrawShares
+        );
+        uint256 denominator = IWater(USDC_WATER).DENOMINATOR();
+        uint256 fees = (grossReceived * IWater(USDC_WATER).withdrawalFees()) /
+            denominator;
+        uint256 netReceived = grossReceived - fees;
+
+        vm.startPrank(address(portal_USDC));
+        virtualLP.withdrawFromYieldSource(address(usdc), Alice, amount);
+
+        assertEq(usdc.balanceOf(Alice), balanceAliceStart + netReceived);
+    }
+
     // claimProtocolRewards
-    // getProfitOfPortal
-    // collectProfitOfPortal
-    // getPendingRewardsUSDC
-    // getPortalVaultLockTime
-    // updatePortalBoostMultiplier
-    // increaseAllowanceVault
-    // increaseAllowanceSingleStaking
-    // increaseAllowanceDualStaking
+    function testRevert_claimProtocolRewards() public {
+        testSuccess_depositToYieldSource();
+
+        vm.expectRevert();
+        virtualLP.claimProtocolRewards(Alice); // wrong address
+    }
+
+    function testSuccess_claimProtocolRewards() public {
+        testSuccess_depositToYieldSource();
+
+        uint256 balanceBefore = usdc.balanceOf(address(portal_USDC));
+
+        vm.warp(block.timestamp + 100);
+        virtualLP.claimProtocolRewards(address(portal_USDC));
+
+        uint256 balanceAfter = usdc.balanceOf(address(portal_USDC));
+
+        // Tx goes through even if no USDC rewards are claimed to ensure esVKA rewards are compounded
+        assertEq(balanceBefore, balanceAfter);
+    }
+
+    // // getProfitOfPortal
+    // function testSuccess_getProfitOfPortal() public {
+    //     //testSuccess_depositToYieldSource();
+    //     // testSuccess_stake_USDC();
+
+    //     uint256 profit = virtualLP.getProfitOfPortal(address(portal_USDC));
+
+    //     assertEq(profit, 0);
+    //     console2.log(profit);
+    // }
+
+    // // collectProfitOfPortal
+    // function testRevert_collectProfitOfPortal() public {}
+
+    // function testSuccess_collectProfitOfPortal() public {}
+
+    // // getPendingRewardsUSDC
+    // function testRevert_getPendingRewardsUSDC() public {}
+
+    // function testSuccess_getPendingRewardsUSDC() public {}
+
+    // // getPortalVaultLockTime
+    // function testRevert_getPortalVaultLockTime() public {}
+
+    // function testSuccess_getPortalVaultLockTime() public {}
+
+    // // updatePortalBoostMultiplier
+    // function testRevert_updatePortalBoostMultiplier() public {}
+
+    // function testSuccess_updatePortalBoostMultiplier() public {}
+
+    // increaseAllowanceVault -> implicitely tested in testSuccess_depositToYieldSource()
+    // increaseAllowanceSingleStaking -> implicitely tested in testSuccess_depositToYieldSource()
+    // increaseAllowanceDualStaking -> implicitely tested in testSuccess_depositToYieldSource()
 
     // convert
     function testRevert_convert_I() public {
@@ -667,40 +730,35 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // Try again after integration testing
-    // function testSuccess_getUpdateAccount() public {
-    //     helper_create_bToken();
-    //     helper_fundLP();
-    //     helper_activateLP();
-    //     helper_registerPortalUSDC();
+    function testSuccess_getUpdateAccount() public {
+        uint256 amount = 1e7;
+        testSuccess_stake_USDC();
 
-    //     helper_stakeAliceUSDC();
+        vm.startPrank(Alice);
+        (
+            address user,
+            uint256 lastUpdateTime,
+            uint256 lastMaxLockDuration,
+            uint256 stakedBalance,
+            uint256 maxStakeDebt,
+            uint256 portalEnergy,
+            uint256 availableToWithdraw
+        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
 
-    //     vm.startPrank(Alice);
-    //     (
-    //         address user,
-    //         uint256 lastUpdateTime,
-    //         uint256 lastMaxLockDuration,
-    //         uint256 stakedBalance,
-    //         uint256 maxStakeDebt,
-    //         uint256 portalEnergy,
-    //         uint256 availableToWithdraw
-    //     ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+        assertTrue(user == Alice);
+        assertEq(lastUpdateTime, block.timestamp);
+        assertEq(lastMaxLockDuration, portal_USDC.maxLockDuration());
+        assertEq(stakedBalance, amount);
+        assertEq(
+            maxStakeDebt,
+            (stakedBalance * lastMaxLockDuration * 1e18) /
+                (SECONDS_PER_YEAR * portal_USDC.DECIMALS_ADJUSTMENT())
+        );
+        assertEq(portalEnergy, maxStakeDebt);
+        assertEq(availableToWithdraw, amount);
 
-    //     assertTrue(user == Alice);
-    //     assertTrue(lastUpdateTime == block.timestamp);
-    //     assertTrue(lastMaxLockDuration == portal_USDC.maxLockDuration());
-    //     assertTrue(stakedBalance == 1e6);
-    //     assertTrue(
-    //         maxStakeDebt ==
-    //             (stakedBalance * maxLockDuration * 1e18) /
-    //                 (SECONDS_PER_YEAR * portal_USDC.DECIMALS_ADJUSTMENT())
-    //     );
-    //     assertTrue(portalEnergy == maxStakeDebt);
-    //     assertTrue(availableToWithdraw == 1e6);
-
-    //     vm.stopPrank();
-    // }
+        vm.stopPrank();
+    }
 
     // stake
     function testRevert_stake_I() public {
@@ -741,12 +799,41 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // stake USDC -> update stake of user + global, send tokens to external protocol
-    // ---> change _depositToYieldSource for this test -> simple deposit
-    // stake ETH -> update stake of user + global, send tokens to external protocol
-    // ---> change _depositToYieldSource for this test -> simple deposit
-    // unstake -> update stake of user + global, withdraw tokens from external protocol + send to user
-    // ---> change _withdrawFromYieldSource for this test -> simple withdrawal with user as target
+    // USDC
+    function testSuccess_stake_USDC() public {
+        uint256 amount = 1e7;
+        helper_prepareSystem();
+        helper_setApprovalsInLP_USDC();
+
+        uint256 balanceBefore = usdc.balanceOf(Alice);
+
+        vm.startPrank(Alice);
+        usdc.approve(address(portal_USDC), 1e55);
+        portal_USDC.stake(amount);
+        vm.stopPrank();
+
+        uint256 balanceAfter = usdc.balanceOf(Alice);
+
+        assertEq(balanceBefore - amount, balanceAfter);
+        assertEq(portal_USDC.totalPrincipalStaked(), amount);
+    }
+
+    // ETH
+    function testSuccess_stake_ETH() public {
+        uint256 amount = 1e7;
+        helper_prepareSystem();
+        helper_setApprovalsInLP_ETH();
+
+        uint256 balanceBefore = Alice.balance;
+
+        vm.prank(Alice);
+        portal_ETH.stake{value: amount}(amount);
+
+        uint256 balanceAfter = Alice.balance;
+
+        assertEq(balanceBefore - amount, balanceAfter);
+        assertEq(portal_ETH.totalPrincipalStaked(), amount);
+    }
 
     // unstake
     function testRevert_unstake() public {
@@ -762,20 +849,70 @@ contract PortalV2MultiAssetTest is Test {
         portal_USDC.unstake(1000);
         vm.stopPrank();
 
-        // vm.startPrank(psmSender);
-        // psm.approve(address(portal_USDC), 1e55);
-        // portal_USDC.buyPortalEnergy(Alice, 1e18, 1, hundredYearsLater);
-        // vm.stopPrank();
+        // amount > user stake balance
+        vm.startPrank(psmSender);
+        psm.approve(address(portal_USDC), 1e55);
+        portal_USDC.buyPortalEnergy(Alice, 1e18, 1, hundredYearsLater);
+        vm.stopPrank();
 
-        // vm.startPrank(Alice);
-        // // amount > user staked balance
-        // vm.expectRevert(ErrorsLib.InsufficientStakeBalance.selector);
-        // portal_USDC.unstake(1000);
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.InsufficientStakeBalance.selector);
+        portal_USDC.unstake(1000);
 
-        // vm.stopPrank();
+        vm.stopPrank();
     }
 
-    // SUCCESS
+    function testSuccess_unstake_USDC() public {
+        uint256 amount = 1e7;
+        testSuccess_stake_USDC();
+
+        uint256 balanceBefore = usdc.balanceOf(Alice);
+        uint256 withdrawShares = IWater(USDC_WATER).convertToShares(amount);
+        uint256 grossReceived = IWater(USDC_WATER).convertToAssets(
+            withdrawShares
+        );
+        uint256 denominator = IWater(USDC_WATER).DENOMINATOR();
+        uint256 fees = (grossReceived * IWater(USDC_WATER).withdrawalFees()) /
+            denominator;
+        uint256 netReceived = grossReceived - fees;
+
+        vm.warp(block.timestamp + 100);
+
+        vm.prank(Alice);
+        portal_USDC.unstake(1e7);
+
+        uint256 balanceAfter = usdc.balanceOf(Alice);
+
+        assertEq(balanceBefore, usdcAmount - amount);
+        assertEq(balanceAfter, balanceBefore + netReceived);
+        assertTrue(balanceAfter <= usdcAmount);
+    }
+
+    function testSuccess_unstake_ETH() public {
+        uint256 amount = 1e7;
+        testSuccess_stake_ETH();
+
+        uint256 balanceBefore = Alice.balance;
+        uint256 withdrawShares = IWater(WETH_WATER).convertToShares(amount);
+        uint256 grossReceived = IWater(WETH_WATER).convertToAssets(
+            withdrawShares
+        );
+        uint256 denominator = IWater(WETH_WATER).DENOMINATOR();
+        uint256 fees = (grossReceived * IWater(WETH_WATER).withdrawalFees()) /
+            denominator;
+        uint256 netReceived = grossReceived - fees;
+
+        vm.warp(block.timestamp + 100);
+
+        vm.prank(Alice);
+        portal_ETH.unstake(1e7);
+
+        uint256 balanceAfter = Alice.balance;
+
+        assertEq(balanceBefore, 1e18 - amount);
+        assertEq(balanceAfter, balanceBefore + netReceived);
+        assertTrue(balanceAfter <= 1e18);
+    }
 
     // forceUnstakeAll
     // user has more debt than PE tokens
@@ -849,7 +986,6 @@ contract PortalV2MultiAssetTest is Test {
             0,
             true
         );
-        console2.log(portalEnergy);
 
         vm.startPrank(Alice);
         psm.approve(address(portal_USDC), 1e55);
@@ -861,7 +997,6 @@ contract PortalV2MultiAssetTest is Test {
             0,
             true
         );
-        console2.log(portalEnergy);
 
         uint256 reserve1 = _TARGET_CONSTANT_USDC / _FUNDING_MIN_AMOUNT;
         uint256 netPSMinput = (1e18 * 99) / 100;
@@ -869,7 +1004,6 @@ contract PortalV2MultiAssetTest is Test {
             (netPSMinput + _FUNDING_MIN_AMOUNT);
 
         assertEq(portalEnergy, result);
-        console2.log(result);
     }
 
     // sellPortalEnergy
@@ -897,6 +1031,7 @@ contract PortalV2MultiAssetTest is Test {
         // portal_USDC.sellPortalEnergy(Alice, 1e18, 1e33, block.timestamp);
     }
 
+    // // function testSuccess_sellPortalEnergy() public {}
     // function testSuccess_sellPortalEnergy() public {}
 
     // quoteBuyPortalEnergy
@@ -908,7 +1043,8 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    function testSuccess_quoteBuyPortalEnergy() public {}
+    // // SUCCESS
+    //     function testSuccess_quoteBuyPortalEnergy() public {}
 
     // quoteSellPortalEnergy
     function testRevert_quoteSellPortalEnergy() public {
@@ -984,10 +1120,10 @@ contract PortalV2MultiAssetTest is Test {
     // SUCCESS
     // testSuccess_mintPortalEnergyToken() public {}
 
-    ///////////////////////////////////
-    ///////////////////////////////////
-    ///////////////////////////////////
-    ///////////////////////////////////
+    /////////////////////////////////
+    /////////////////////////////////
+    /////////////////////////////////
+    /////////////////////////////////
 
     // forceUnstakeAll USDC only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
 
