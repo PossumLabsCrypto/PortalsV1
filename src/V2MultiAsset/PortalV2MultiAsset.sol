@@ -446,6 +446,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             /// @dev Burn portalEnergyToken from the caller to increase portalEnergy sufficiently
             /// @dev Throws if caller has not enough tokens or allowance is too low
             _burnPortalEnergyToken(msg.sender, remainingDebt);
+            portalEnergy += remainingDebt;
         }
 
         /// @dev initialize helper variable

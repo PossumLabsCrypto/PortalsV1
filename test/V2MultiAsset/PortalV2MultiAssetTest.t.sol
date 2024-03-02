@@ -186,12 +186,23 @@ contract PortalV2MultiAssetTest is Test {
         virtualLP.activateLP();
     }
 
+    // fund and activate the LP and register both Portals
     function helper_prepareSystem() public {
         helper_create_bToken();
         helper_fundLP();
         helper_registerPortalETH();
         helper_registerPortalUSDC();
         helper_activateLP();
+    }
+
+    // Deploy the NFT contract
+    function helper_createNFT() public {
+        portal_USDC.create_portalNFT();
+    }
+
+    // Deploy the ERC20 contract for mintable Portal Energy
+    function helper_createPortalEnergyToken() public {
+        portal_USDC.create_portalEnergyToken();
     }
 
     // Increase allowance of tokens used by the USDC Portal
@@ -274,8 +285,10 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(virtualLP.owner() == address(0));
     }
 
-    ////////// INTEGRATION TESTING //////////////
-    //depositToYieldSource
+    ////////////////////////////////////////////
+    ////////////// INTEGRATION /////////////////
+    ////////////////////////////////////////////
+    // depositToYieldSource
     function testRevert_depositToYieldSource() public {
         helper_prepareSystem();
         uint256 amount = 1e7;
@@ -334,7 +347,6 @@ contract PortalV2MultiAssetTest is Test {
 
     // withdrawFromYieldSource
     // No revert testing because inputs come from the Portal which follows a hard coded structure
-    // Cannot fail if it was setup correctly and if the underlying protocol doesn´t change
     function testSuccess_withdrawFromYieldSource() public {
         uint256 amount = 1e7;
         testSuccess_depositToYieldSource();
@@ -380,40 +392,9 @@ contract PortalV2MultiAssetTest is Test {
         assertEq(balanceBefore, balanceAfter);
     }
 
-    // // getProfitOfPortal
-    // function testSuccess_getProfitOfPortal() public {
-    //     //testSuccess_depositToYieldSource();
-    //     // testSuccess_stake_USDC();
-
-    //     uint256 profit = virtualLP.getProfitOfPortal(address(portal_USDC));
-
-    //     assertEq(profit, 0);
-    //     console2.log(profit);
-    // }
-
-    // // collectProfitOfPortal
-    // function testRevert_collectProfitOfPortal() public {}
-
-    // function testSuccess_collectProfitOfPortal() public {}
-
-    // // getPendingRewardsUSDC
-    // function testRevert_getPendingRewardsUSDC() public {}
-
-    // function testSuccess_getPendingRewardsUSDC() public {}
-
-    // // getPortalVaultLockTime
-    // function testRevert_getPortalVaultLockTime() public {}
-
-    // function testSuccess_getPortalVaultLockTime() public {}
-
-    // // updatePortalBoostMultiplier
-    // function testRevert_updatePortalBoostMultiplier() public {}
-
-    // function testSuccess_updatePortalBoostMultiplier() public {}
-
-    // increaseAllowanceVault -> implicitely tested in testSuccess_depositToYieldSource()
-    // increaseAllowanceSingleStaking -> implicitely tested in testSuccess_depositToYieldSource()
-    // increaseAllowanceDualStaking -> implicitely tested in testSuccess_depositToYieldSource()
+    ////////////////////////////////////////////
+    //////////// END INTEGRATION ///////////////
+    ////////////////////////////////////////////
 
     // convert
     function testRevert_convert_I() public {
@@ -915,9 +896,81 @@ contract PortalV2MultiAssetTest is Test {
     }
 
     // forceUnstakeAll
-    // user has more debt than PE tokens
+    function testRevert_forceUnstakeAll() public {
+        testSuccess_stake_USDC();
 
-    // quoteForceUnstakeAll -> only Success -> testable only after successful stake
+        // Try forceUnstakeAll with insufficient PE/ PE tokens
+        vm.startPrank(Alice);
+        portal_USDC.sellPortalEnergy(Alice, 1e5, 1, block.timestamp);
+        vm.expectRevert(); // bubbles up from ERC20
+        portal_USDC.forceUnstakeAll();
+        vm.stopPrank();
+
+        // Try forceUnstakeAll without a stake
+        vm.startPrank(Bob);
+        vm.expectRevert(ErrorsLib.EmptyAccount.selector);
+        portal_USDC.forceUnstakeAll();
+        vm.stopPrank();
+    }
+
+    function testSuccess_forceUnstakeAll() public {
+        helper_createPortalEnergyToken();
+        testSuccess_stake_USDC();
+
+        vm.warp(block.timestamp + 100);
+
+        vm.startPrank(Alice);
+        psm.approve(address(portal_USDC), 1e55);
+        portal_USDC.portalEnergyToken().approve(address(portal_USDC), 1e55);
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceBefore,
+            ,
+            uint256 peBalanceBefore,
+
+        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+
+        portal_USDC.mintPortalEnergyToken(Alice, peBalanceBefore);
+        portal_USDC.buyPortalEnergy(Alice, 1e20, 1, block.timestamp);
+
+        uint256 interimBalancePeTokens = portal_USDC
+            .portalEnergyToken()
+            .balanceOf(Alice);
+
+        portal_USDC.forceUnstakeAll();
+        vm.stopPrank();
+
+        uint256 endBalancePeTokens = portal_USDC.portalEnergyToken().balanceOf(
+            Alice
+        );
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceAfter,
+            ,
+            uint256 peBalanceAfter,
+
+        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+
+        assertTrue(stakeBalanceBefore > 0);
+        assertEq(stakeBalanceAfter, 0);
+        assertTrue(peBalanceAfter != peBalanceBefore);
+        assertTrue(endBalancePeTokens < interimBalancePeTokens);
+    }
+
+    // quoteForceUnstakeAll
+    function testSuccess_quoteForceUnstakeAll() public {
+        testSuccess_stake_USDC();
+
+        uint256 amountToBurn = portal_USDC.quoteforceUnstakeAll(Alice);
+
+        assertEq(amountToBurn, 0);
+    }
 
     // create_portalNFT
     function testRevert_create_portalNFT() public {
@@ -952,9 +1005,96 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
+    function testSuccess_mintNFTposition() public {
+        helper_createNFT();
+        testSuccess_stake_USDC();
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceBefore,
+            ,
+            uint256 peBalanceBefore,
+
+        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+
+        vm.prank(Alice);
+        portal_USDC.mintNFTposition(Karen);
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceAfter,
+            ,
+            uint256 peBalanceAfter,
+
+        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
+
+        assertTrue(stakeBalanceBefore > 0);
+        assertTrue(peBalanceBefore > 0);
+        assertEq(stakeBalanceAfter, 0);
+        assertEq(peBalanceAfter, 0);
+
+        (
+            uint256 nftMintTime,
+            uint256 nftStakedBalance,
+            uint256 nftPortalEnergy
+        ) = portal_USDC.portalNFT().accounts(1);
+
+        assertTrue(address(portal_USDC.portalNFT()) != address(0));
+        assertEq(nftMintTime, block.timestamp);
+        assertEq(nftStakedBalance, stakeBalanceBefore);
+        assertEq(nftPortalEnergy, peBalanceBefore);
+    }
+
     // redeemNFTposition
-    // try redeem an ID that does not exist
-    // try redeem and ID that is not owned by the caller
+    function testRevert_redeemNFTposition() public {
+        testSuccess_mintNFTposition();
+
+        // Not owner of the NFT
+        vm.startPrank(Alice);
+        vm.expectRevert(ErrorsLib.NotOwnerOfNFT.selector);
+        portal_USDC.redeemNFTposition(1);
+
+        // NFT ID does not exist
+        vm.expectRevert(ErrorsLib.NotOwnerOfNFT.selector);
+        portal_USDC.redeemNFTposition(123);
+    }
+
+    function testSuccess_redeemNFTposition() public {
+        testSuccess_mintNFTposition();
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceBefore,
+            ,
+            uint256 peBalanceBefore,
+
+        ) = portal_USDC.getUpdateAccount(Karen, 0, true);
+
+        assertEq(stakeBalanceBefore, 0);
+        assertEq(peBalanceBefore, 0);
+
+        vm.startPrank(Karen);
+        portal_USDC.redeemNFTposition(1);
+
+        (
+            ,
+            ,
+            ,
+            uint256 stakeBalanceAfter,
+            ,
+            uint256 peBalanceAfter,
+
+        ) = portal_USDC.getUpdateAccount(Karen, 0, true);
+
+        assertTrue(stakeBalanceAfter > 0);
+        assertTrue(peBalanceAfter > 0);
+    }
 
     // buyPortalEnergy
     function testRevert_buyPortalEnergy() public {
@@ -1031,8 +1171,35 @@ contract PortalV2MultiAssetTest is Test {
         // portal_USDC.sellPortalEnergy(Alice, 1e18, 1e33, block.timestamp);
     }
 
-    // // function testSuccess_sellPortalEnergy() public {}
-    // function testSuccess_sellPortalEnergy() public {}
+    function testSuccess_sellPortalEnergy() public {
+        testSuccess_stake_USDC();
+        uint256 amount = 1e6;
+
+        (, , , , , uint256 peBalanceBefore, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
+        uint256 psmBalanceBefore_Bob = psm.balanceOf(Bob);
+
+        vm.startPrank(Alice);
+        portal_USDC.sellPortalEnergy(Bob, amount, 1, block.timestamp);
+
+        uint256 reserve0 = _FUNDING_MIN_AMOUNT;
+        uint256 reserve1 = _TARGET_CONSTANT_USDC / _FUNDING_MIN_AMOUNT;
+        uint256 result = (amount * reserve0) / (amount + reserve1);
+
+        (, , , , , uint256 peBalanceAfter, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
+        uint256 psmBalanceAfter_Bob = psm.balanceOf(Bob);
+
+        assertEq(peBalanceAfter, peBalanceBefore - amount);
+        assertEq(psmBalanceBefore_Bob, psmAmount);
+        assertEq(psmBalanceAfter_Bob, psmAmount + result);
+    }
 
     // quoteBuyPortalEnergy
     function testRevert_quoteBuyPortalEnergy() public {
@@ -1043,8 +1210,19 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // // SUCCESS
-    //     function testSuccess_quoteBuyPortalEnergy() public {}
+    function testSuccess_quoteBuyPortalEnergy() public {
+        helper_prepareSystem();
+        uint256 amount = 1e5;
+
+        uint256 result = portal_USDC.quoteBuyPortalEnergy(amount);
+        uint256 reserve0 = _FUNDING_MIN_AMOUNT;
+        uint256 reserve1 = _TARGET_CONSTANT_USDC / _FUNDING_MIN_AMOUNT;
+        uint256 lpProtection = portal_USDC.LP_PROTECTION_HURDLE();
+        uint256 resultCheck = (((amount * (100 - lpProtection)) / 100) *
+            reserve1) / ((amount * (100 - lpProtection)) / 100 + reserve0);
+
+        assertEq(result, resultCheck);
+    }
 
     // quoteSellPortalEnergy
     function testRevert_quoteSellPortalEnergy() public {
@@ -1053,6 +1231,18 @@ contract PortalV2MultiAssetTest is Test {
         vm.expectRevert();
         portal_USDC.quoteSellPortalEnergy(123456);
         vm.stopPrank();
+    }
+
+    function testSuccess_quoteSellPortalEnergy() public {
+        helper_prepareSystem();
+        uint256 amount = 1e5;
+
+        uint256 result = portal_USDC.quoteSellPortalEnergy(amount);
+        uint256 reserve0 = _FUNDING_MIN_AMOUNT;
+        uint256 reserve1 = _TARGET_CONSTANT_USDC / _FUNDING_MIN_AMOUNT;
+        uint256 resultCheck = (amount * reserve0) / (amount + reserve1);
+
+        assertEq(result, resultCheck);
     }
 
     // create_portalEnergyToken
@@ -1095,8 +1285,36 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // SUCCESS
-    // function testSuccess_burnPortalEnergyToken() public {}
+    function testSuccess_burnPortalEnergyToken() public {
+        testSuccess_mintPortalEnergyToken();
+        uint256 balanceBefore = IERC20(portal_USDC.portalEnergyToken())
+            .balanceOf(Alice);
+        uint256 amount = balanceBefore;
+
+        (, , , , , uint256 peBalanceBefore_Bob, ) = portal_USDC
+            .getUpdateAccount(Bob, 0, true);
+
+        vm.startPrank(Alice);
+        IERC20(portal_USDC.portalEnergyToken()).approve(
+            address(portal_USDC),
+            1e55
+        );
+        portal_USDC.burnPortalEnergyToken(Bob, amount);
+        vm.stopPrank();
+
+        (, , , , , uint256 peBalanceAfter_Bob, ) = portal_USDC.getUpdateAccount(
+            Bob,
+            0,
+            true
+        );
+        uint256 balanceAfter = IERC20(portal_USDC.portalEnergyToken())
+            .balanceOf(Alice);
+
+        assertEq(balanceBefore, amount);
+        assertEq(balanceAfter, 0);
+        assertEq(peBalanceBefore_Bob, 0);
+        assertEq(peBalanceAfter_Bob, amount);
+    }
 
     // mintPortalEnergyToken
     function testRevert_mintPortalEnergyToken() public {
@@ -1117,21 +1335,33 @@ contract PortalV2MultiAssetTest is Test {
         vm.stopPrank();
     }
 
-    // SUCCESS
-    // testSuccess_mintPortalEnergyToken() public {}
+    function testSuccess_mintPortalEnergyToken() public {
+        testSuccess_stake_USDC();
+        testSuccess_create_portalEnergyToken();
 
-    /////////////////////////////////
-    /////////////////////////////////
-    /////////////////////////////////
-    /////////////////////////////////
+        uint256 amount = 1e4;
+        (, , , , , uint256 peBalanceBefore, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
 
-    // forceUnstakeAll USDC only -> burn PE tokens, update stake of user + global, withdraw from external protocol + send to user
+        vm.prank(Alice);
+        portal_USDC.mintPortalEnergyToken(Alice, amount);
 
-    // quoteBuyPortalEnergy -> return the correct number
-    // quoteSellPortalEnergy -> return the correct number
-    // buyPortalEnergy -> increase the PortalEnergy of recipient, transfer PSM from user to Portal
-    // sellPortalEnergy -> decrease the PortalEnergy of caller, transfer PSM from Portal to recipient
+        uint256 lpProtection = portal_USDC.LP_PROTECTION_HURDLE();
+        uint256 expectMinted = (amount * (100 - lpProtection)) / 100;
 
-    // mintNFTposition -> delete user account, mint NFT to recipient address, check that NFT data is correct
-    // redeemNFTposition -> burn NFT, update the user account and add NFT values
+        (, , , , , uint256 peBalanceAfter, ) = portal_USDC.getUpdateAccount(
+            Alice,
+            0,
+            true
+        );
+
+        assertEq(peBalanceAfter, peBalanceBefore - amount);
+        assertEq(
+            IERC20(portal_USDC.portalEnergyToken()).balanceOf(Alice),
+            expectMinted
+        );
+    }
 }

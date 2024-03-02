@@ -18,6 +18,7 @@ library ErrorsLib {
     error DurationLocked();
     error InsufficientToWithdraw();
     error InsufficientStakeBalance();
+
     error InactiveLP();
     error ActiveLP();
     error NotOwner();
@@ -29,4 +30,6 @@ library ErrorsLib {
     error TimeLockActive();
     error NoProfit();
     error OwnerRevoked();
+
+    error NotOwnerOfNFT();
 }
