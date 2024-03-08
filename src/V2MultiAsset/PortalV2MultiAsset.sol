@@ -199,6 +199,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     /// @notice Simulate updating a user stake position and return the values without updating the struct
     /// @dev Returns the simulated up-to-date user stake information
+    /// @dev Considers changes from staking or unstaking including burning amount of PE tokens
     /// @param _user The user whose stake position is to be updated
     /// @param _amount The amount to add or subtract from the user's stake position
     /// @param _isPositiveAmount True for staking (add), false for unstaking (subtract)
@@ -216,21 +217,28 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
-            uint256 availableToWithdraw
+            uint256 availableToWithdraw,
+            uint256 portalEnergyTokensRequired
         )
     {
         /// @dev Load user account into memory
         Account memory account = accounts[_user];
+
+        /// @dev Check that the Stake Balance is sufficient for unstaking the amount
+        if (!_isPositiveAmount && _amount > account.stakedBalance) {
+            revert InsufficientStakeBalance();
+        }
 
         /// @dev initialize helper variables
         uint256 portalEnergyEarned;
         uint256 portalEnergyIncrease;
         uint256 portalEnergyNetChange;
         uint256 portalEnergyAdjustment;
+        uint256 maxLock = maxLockDuration;
 
         /// @dev Check the user account state based on lastUpdateTime
         /// @dev If this variable is 0, the user never staked and could not earn PE
-        if (account.lastUpdateTime != 0) {
+        if (account.lastUpdateTime > 0) {
             /// @dev Calculate the Portal Energy earned since the last update
             portalEnergyEarned = (account.stakedBalance *
                 (block.timestamp - account.lastUpdateTime) *
@@ -238,7 +246,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
             /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
             portalEnergyIncrease = (account.stakedBalance *
-                (maxLockDuration - account.lastMaxLockDuration) *
+                (maxLock - account.lastMaxLockDuration) *
                 1e18);
 
             /// @dev Summarize Portal Energy changes and divide by common denominator
@@ -249,45 +257,41 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Calculate the adjustment of Portal Energy from balance change
         portalEnergyAdjustment =
-            ((_amount * maxLockDuration) * 1e18) /
+            ((_amount * maxLock) * 1e18) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
-        /// @dev Check that user has enough Portal Energy for unstaking
-        if (
-            !_isPositiveAmount &&
+        /// @dev Calculate the amount of Portal Energy Tokens to be burned for unstaking the amount
+        portalEnergyTokensRequired = !_isPositiveAmount &&
             portalEnergyAdjustment >
             (account.portalEnergy + portalEnergyNetChange)
-        ) {
-            revert InsufficientToWithdraw();
-        }
-
-        /// @dev Check that the Stake Balance is sufficient for unstaking
-        if (!_isPositiveAmount && _amount > account.stakedBalance) {
-            revert InsufficientStakeBalance();
-        }
+            ? portalEnergyAdjustment -
+                (account.portalEnergy + portalEnergyNetChange)
+            : 0;
 
         /// @dev Set the last update time to the current timestamp
         lastUpdateTime = block.timestamp;
 
-        /// @dev Get the updated last maxLockDuration
-        lastMaxLockDuration = maxLockDuration;
+        /// @dev Update the last maxLockDuration
+        lastMaxLockDuration = maxLock;
 
-        /// @dev Calculate the user's staked balance and consider stake or unstake
+        /// @dev Update the user's staked balance and consider stake or unstake
         stakedBalance = _isPositiveAmount
             ? account.stakedBalance + _amount
             : account.stakedBalance - _amount;
 
         /// @dev Update the user's max stake debt
         maxStakeDebt =
-            (stakedBalance * maxLockDuration * 1e18) /
+            (stakedBalance * maxLock * 1e18) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the user's portalEnergy and account for stake or unstake
+        /// @dev This will be 0 if Portal Energy Tokens must be burned
         portalEnergy = _isPositiveAmount
             ? account.portalEnergy +
                 portalEnergyNetChange +
                 portalEnergyAdjustment
             : account.portalEnergy +
+                portalEnergyTokensRequired +
                 portalEnergyNetChange -
                 portalEnergyAdjustment;
 
@@ -334,13 +338,13 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Stake the principal token into the Portal & redirect principal to yield source
     /// @dev This function allows users to stake their principal tokens into the Portal
-    /// @dev Can only be called if Portal is active
+    /// @dev Can only be called if LP is active
     /// @dev Does not follow CEI pattern for optimisation reasons. The handled tokens are trusted.
     /// @dev Update the user account
     /// @dev Update the global tracker of staked principal
     /// @dev Deposit the principal into the yield source (external protocol)
     /// @param _amount The amount of tokens to stake
-    function stake(uint256 _amount) external payable nonReentrant {
+    function stake(uint256 _amount) external payable activeLP nonReentrant {
         /// @dev Convert native ETH to WETH for contract, then send to LP
         /// @dev This section must sit before using _amount elsewhere to guarantee consistency
         /// @dev This knowingly deviates from the CEI pattern
@@ -379,6 +383,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
+            ,
 
         ) = getUpdateAccount(msg.sender, _amount, true);
 
@@ -399,6 +404,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     /// @dev This function allows users to unstake their tokens
     /// @dev Update the user account
     /// @dev Update the global tracker of staked principal
+    /// @dev Burn Portal Energy Tokens from caller to top up account balance if required
     /// @dev Withdraw the matching amount of principal from the yield source (external protocol)
     /// @dev Send the principal tokens to the user
     /// @param _amount The amount of tokens to unstake
@@ -409,7 +415,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         }
 
         /// @dev Get the current state of the user stake
-        /// @dev Throws if caller tries to unstake more than stake balance or with insufficient PE
+        /// @dev Throws if caller tries to unstake more than stake balance
+        /// @dev Will burn Portal Energy tokens if account has insufficient Portal Energy
         (
             ,
             ,
@@ -417,7 +424,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
-
+            ,
+            uint256 portalEnergyTokensRequired
         ) = getUpdateAccount(msg.sender, _amount, false);
 
         /// @dev Update the user stake struct
@@ -425,6 +433,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Update the global tracker of staked principal
         totalPrincipalStaked -= _amount;
+
+        /// @dev Burn portalEnergyToken from the caller's wallet, throws if insufficient balance
+        if (portalEnergyTokensRequired > 0) {
+            portalEnergyToken.burnFrom(msg.sender, portalEnergyTokensRequired);
+        }
 
         /// @dev Withdraw the assets from external Protocol and send to user
         virtualLP.withdrawFromYieldSource(
@@ -435,92 +448,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Emit event that tokens have been unstaked
         emit PrincipalUnstaked(msg.sender, _amount);
-    }
-
-    /// @notice Force unstaking via burning portalEnergyToken from user wallet to decrease debt sufficiently
-    /// @dev This function allows users to force unstake all of their tokens by burning portalEnergyToken from their wallet
-    /// @dev Calculate how many portalEnergyToken must be burned from the user's wallet, if any
-    /// @dev Burn the appropriate amount of portalEnergyToken from the user's wallet to increase portalEnergy
-    /// @dev Update the user's stake data
-    /// @dev Update the global tracker of staked principal
-    /// @dev Withdraw the principal from the yield source (external protocol)
-    /// @dev Send the retrieved stake balance to the user
-    function forceUnstakeAll() external nonReentrant {
-        /// @dev Get the current state of the user stake
-        (
-            ,
-            ,
-            uint256 lastMaxLockDuration,
-            uint256 stakedBalance,
-            uint256 maxStakeDebt,
-            uint256 portalEnergy,
-
-        ) = getUpdateAccount(msg.sender, 0, true);
-
-        /// @dev Check if the user has a stake
-        if (stakedBalance == 0) {
-            revert EmptyAccount();
-        }
-
-        /// @dev Calculate how many portalEnergyToken must be burned to unstake all
-        if (portalEnergy < maxStakeDebt) {
-            uint256 remainingDebt = maxStakeDebt - portalEnergy;
-
-            /// @dev Burn portalEnergyToken from the caller to increase portalEnergy sufficiently
-            /// @dev Throws if caller has not enough tokens or allowance is too low
-            _burnPortalEnergyToken(msg.sender, remainingDebt);
-            portalEnergy += remainingDebt;
-        }
-
-        /// @dev initialize helper variable
-        uint256 oldStakedBalance = stakedBalance;
-
-        /// @dev Calculate the new values of the user stake
-        stakedBalance = 0;
-        maxStakeDebt = 0;
-        portalEnergy -=
-            (oldStakedBalance * lastMaxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
-
-        /// @dev Update the user stake struct
-        _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
-
-        /// @dev Update the global tracker of staked principal
-        totalPrincipalStaked -= oldStakedBalance;
-
-        /// @dev Withdraw the principal from the yield source (external Protocol)
-        virtualLP.withdrawFromYieldSource(
-            PRINCIPAL_TOKEN_ADDRESS,
-            msg.sender,
-            oldStakedBalance
-        );
-
-        /// @dev Emit event that tokens have been unstaked
-        emit PrincipalUnstaked(msg.sender, oldStakedBalance);
-    }
-
-    /// @notice Simulate forced unstake and return the number of portal energy tokens to be burned
-    /// @dev Simulate forced unstake and return the number of portal energy tokens to be burned
-    /// @param _user The user whose stake position is to be updated for the simulation
-    /// @return portalEnergyTokenToBurn Returns the number of portal energy tokens to be burned for a full unstake
-    function quoteforceUnstakeAll(
-        address _user
-    ) external view returns (uint256 portalEnergyTokenToBurn) {
-        /// @dev Get the relevant data from the simulated account update
-        (
-            ,
-            ,
-            ,
-            ,
-            uint256 maxStakeDebt,
-            uint256 portalEnergy,
-
-        ) = getUpdateAccount(_user, 0, true);
-
-        /// @dev Calculate how many Portal Energy Tokens must be burned for a full unstake
-        portalEnergyTokenToBurn = maxStakeDebt > portalEnergy
-            ? maxStakeDebt - portalEnergy
-            : 0;
     }
 
     // ============================================
@@ -569,6 +496,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             ,
             uint256 portalEnergy,
+            ,
 
         ) = getUpdateAccount(msg.sender, 0, true);
 
@@ -599,6 +527,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
+            ,
 
         ) = getUpdateAccount(msg.sender, 0, true);
 
@@ -710,6 +639,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
+            ,
 
         ) = getUpdateAccount(msg.sender, 0, true);
 
@@ -741,6 +671,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Simulate buying portalEnergy (output) with PSM tokens (input) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy buy order of any size
+    /// @dev Can only be called when the LP is active to avoid bad output and to prevent exchange
     /// @dev Update the token reserves to get the exchange price
     /// @param _amountInputPSM The amount of PSM tokens sold
     /// @return amountReceived The amount of portalEnergy received by the recipient
@@ -766,6 +697,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     /// @notice Simulate selling portalEnergy (input) against PSM tokens (output) and return amount received (output)
     /// @dev This function allows the caller to simulate a portalEnergy sell order of any size
+    /// @dev Can only be called when the LP is active to avoid bad output and to prevent exchange
     /// @dev Update the token reserves to get the exchange price
     /// @param _amountInputPE The amount of Portal Energy sold
     /// @return amountReceived The amount of PSM tokens received by the recipient
@@ -847,18 +779,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         emit PortalEnergyBurned(msg.sender, _recipient, _amount);
     }
 
-    /// @notice Burn portalEnergyToken from user wallet and increase portalEnergy of user equally
-    /// @dev This function burns portalEnergyToken from the user and increases the internal account balance
-    /// @param _user The address whose portalEnergy is to be increased
-    /// @param _amount The amount of portalEnergyToken to burn
-    function _burnPortalEnergyToken(address _user, uint256 _amount) private {
-        /// @dev Increase the portalEnergy of the user by the amount of portalEnergyToken burned
-        accounts[_user].portalEnergy += _amount;
-
-        /// @dev Burn portalEnergyToken from the caller's wallet
-        portalEnergyToken.burnFrom(_user, _amount);
-    }
-
     /// @notice Users can mint portalEnergyToken to a recipient address using their internal balance
     /// @dev This function controls the minting of PortalEnergyToken
     /// @dev Decrease portalEnergy of caller and mint PortalEnergyTokens to the recipient
@@ -885,6 +805,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
+            ,
 
         ) = getUpdateAccount(msg.sender, 0, true);
 
