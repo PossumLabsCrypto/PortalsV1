@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity =0.8.19;
 
 interface IVirtualLP {
@@ -11,4 +11,6 @@ interface IVirtualLP {
         address _user,
         uint256 _amount
     ) external;
+
+    function isActiveLP() external view returns (bool);
 }

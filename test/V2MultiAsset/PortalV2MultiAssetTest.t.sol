@@ -106,6 +106,8 @@ contract PortalV2MultiAssetTest is Test {
             _TARGET_CONSTANT_USDC,
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
             _DECIMALS_USDC,
+            "USD Coin",
+            "USDC",
             _META_DATA_URI
         );
         portal_ETH = new PortalV2MultiAsset(
@@ -113,6 +115,8 @@ contract PortalV2MultiAssetTest is Test {
             _TARGET_CONSTANT_WETH,
             _PRINCIPAL_TOKEN_ADDRESS_ETH,
             _DECIMALS,
+            "ETHER",
+            "ETH",
             _META_DATA_URI
         );
 

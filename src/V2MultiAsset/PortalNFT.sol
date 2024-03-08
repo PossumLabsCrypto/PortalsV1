@@ -6,7 +6,8 @@ import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/
 error NotOwner();
 error NotOwnerOfNFT();
 
-// must be deployed by the Portal itself which is owner
+/// @notice This NFT contract can mint and redeem stakes in the deploying Portal
+/// @dev Must be deployed by the Portal which becomes the owner with mint and burn privileges
 contract PortalNFT is ERC721URIStorage {
     constructor(
         uint256 _decimalsAdjustment,

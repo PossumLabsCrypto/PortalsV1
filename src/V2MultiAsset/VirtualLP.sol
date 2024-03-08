@@ -456,8 +456,13 @@ contract VirtualLP is ReentrancyGuard {
         /// @dev Get the asset of the Portal
         address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
 
-        /// @dev Allow spending of Assets by the associated Vault
+        /// @dev Get the principal token address, WETH for ETH
         address tokenAdr = (asset == address(0)) ? WETH_ADDRESS : asset;
+
+        /// @dev For ERC20 that require allowance to be 0 before increasing (e.g. USDT) add the following:
+        /// IERC20(tokenAdr).approve(vaults[_portal][asset], 0);
+
+        /// @dev Allow spending of Assets by the associated Vault
         IERC20(tokenAdr).safeIncreaseAllowance(
             vaults[_portal][asset],
             MAX_UINT
@@ -740,4 +745,8 @@ contract VirtualLP is ReentrancyGuard {
         bToken = new MintBurnToken(name, symbol);
         bTokenAddress = address(bToken);
     }
+
+    receive() external payable {}
+
+    fallback() external payable {}
 }
