@@ -492,7 +492,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         (
             ,
             ,
-            ,
+            uint256 lastMaxLockDuation,
             uint256 stakedBalance,
             ,
             uint256 portalEnergy,
@@ -508,14 +508,19 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         delete accounts[msg.sender];
 
         /// @dev mint NFT to recipient containing the account information, get the returned ID
-        uint256 nftID = portalNFT.mint(_recipient, stakedBalance, portalEnergy);
+        uint256 nftID = portalNFT.mint(
+            _recipient,
+            lastMaxLockDuation,
+            stakedBalance,
+            portalEnergy
+        );
 
         /// @dev Emit event that the NFT was minted
         emit PortalNFTminted(msg.sender, _recipient, nftID);
     }
 
-    /// @notice This function allows users to redeem their PortalNFT for its content
-    /// @dev Update the user account to current state. Required because stake balance can change.
+    /// @notice This function allows users to redeem (burn) their PortalNFT for its content
+    /// @dev Update the user account to current state. Required because stake balance can change which impacts PE earning
     /// @dev Burn the NFT and retrieve its balances (stake balance & portalEnergy)
     /// @dev Add the NFT values to the account of the user
     function redeemNFTposition(uint256 _tokenId) external {

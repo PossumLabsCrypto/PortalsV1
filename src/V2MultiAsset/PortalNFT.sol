@@ -2,6 +2,7 @@
 pragma solidity =0.8.19;
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import {IPortalV2MultiAsset} from "./interfaces/IPortalV2MultiAsset.sol";
 
 error NotOwner();
 error NotOwnerOfNFT();
@@ -18,13 +19,19 @@ contract PortalNFT is ERC721URIStorage {
         OWNER = msg.sender;
         DECIMALS_ADJUSTMENT = _decimalsAdjustment;
         metadataURI = _metadataURI;
+        portal = IPortalV2MultiAsset(msg.sender);
     }
 
-    // Variables
+    // ========================
+    //    VARIABLES & MODIFIER
+    // ========================
+    IPortalV2MultiAsset public portal;
+
     address private immutable OWNER;
 
     struct AccountNFT {
         uint256 mintTime;
+        uint256 lastMaxLockDuration;
         uint256 stakedBalance;
         uint256 portalEnergy;
     }
@@ -36,7 +43,6 @@ contract PortalNFT is ERC721URIStorage {
     uint256 private immutable DECIMALS_ADJUSTMENT;
     string private metadataURI; // Metadata URI for all NFTs of this Portal
 
-    // Ownership modifier
     modifier onlyOwner() {
         if (msg.sender != OWNER) {
             revert NotOwner();
@@ -45,30 +51,39 @@ contract PortalNFT is ERC721URIStorage {
     }
 
     // ========================
-    //    Functions
+    //    FUNCTIONS
     // ========================
-    // Get the current values for stakedBalance and portalEnergy from the NFT
+    /// @dev Get the current values for stakedBalance and portalEnergy of a particular NFT
     function getAccount(
         uint256 _tokenId
     ) public view returns (uint256 stakedBalance, uint256 portalEnergy) {
         _requireMinted(_tokenId);
 
         AccountNFT memory account = accounts[_tokenId];
+        /// @dev Calculate the Portal Energy earned since minting
+        uint256 portalEnergyEarned = (account.stakedBalance *
+            (block.timestamp - account.mintTime) *
+            1e18);
 
-        // Calculate the current value of portalEnergy
+        /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
+        uint256 portalEnergyIncrease = (account.stakedBalance *
+            (portal.maxLockDuration() - account.lastMaxLockDuration) *
+            1e18);
+
+        /// @dev Summarize changes in Portal Energy and divide by common denominator
         account.portalEnergy +=
-            (account.stakedBalance *
-                (block.timestamp - account.mintTime) *
-                1e18) /
+            (portalEnergyEarned + portalEnergyIncrease) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
+        /// @dev Return the values
         stakedBalance = account.stakedBalance;
         portalEnergy = account.portalEnergy;
     }
 
-    // Mint new Position NFT, can only be called by owner (Portal)
+    /// @dev Mint new NFT, can only be called by owner (Portal)
     function mint(
         address _recipient,
+        uint256 _lastMaxLockDuration,
         uint256 _stakedBalance,
         uint256 _portalEnergy
     ) external onlyOwner returns (uint256 nftID) {
@@ -78,6 +93,7 @@ contract PortalNFT is ERC721URIStorage {
 
         AccountNFT memory account;
         account.mintTime = block.timestamp;
+        account.lastMaxLockDuration = _lastMaxLockDuration;
         account.stakedBalance = _stakedBalance;
         account.portalEnergy = _portalEnergy;
 
@@ -86,8 +102,8 @@ contract PortalNFT is ERC721URIStorage {
         nftID = totalSupply;
     }
 
-    // Redeem Position NFT to receive internal Account in Portal
-    // Can only be called by the owner (Portal)
+    /// @dev Redeem Position NFT to receive internal Account in Portal
+    /// @dev Can only be called by the owner (Portal)
     function redeem(
         address ownerOfNFT,
         uint256 _tokenId
@@ -96,8 +112,10 @@ contract PortalNFT is ERC721URIStorage {
             revert NotOwnerOfNFT();
         }
 
+        /// @dev return the relevant values
         (stakedBalance, portalEnergy) = getAccount(_tokenId);
 
+        /// @dev Burn the NFT and delete the associated account in the NFT contract
         _burn(_tokenId);
         delete accounts[_tokenId];
     }

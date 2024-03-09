@@ -11,4 +11,6 @@ interface IPortalV2MultiAsset {
         external
         view
         returns (address PRINCIPAL_TOKEN_ADDRESS);
+
+    function maxLockDuration() external view returns (uint256);
 }
