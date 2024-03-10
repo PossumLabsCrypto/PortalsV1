@@ -211,7 +211,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         public
         view
         returns (
-            address user,
             uint256 lastUpdateTime,
             uint256 lastMaxLockDuration,
             uint256 stakedBalance,
@@ -224,44 +223,42 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Load user account into memory
         Account memory account = accounts[_user];
 
+        /// @dev initialize helper variables
+        uint256 amount = _amount; // to avoid stack too deep issue
+        bool isPositive = _isPositiveAmount; // to avoid stack too deep issue
+        uint256 portalEnergyNetChange;
+        uint256 denominator = SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT;
+        uint256 timePassed = block.timestamp - account.lastUpdateTime;
+        uint256 maxLockDifference = maxLockDuration -
+            account.lastMaxLockDuration;
+        uint256 addedPE = amount * maxLockDuration * 1e18;
+        stakedBalance = account.stakedBalance;
+
         /// @dev Check that the Stake Balance is sufficient for unstaking the amount
-        if (!_isPositiveAmount && _amount > account.stakedBalance) {
+        if (!isPositive && amount > stakedBalance) {
             revert InsufficientStakeBalance();
         }
-
-        /// @dev initialize helper variables
-        uint256 portalEnergyEarned;
-        uint256 portalEnergyIncrease;
-        uint256 portalEnergyNetChange;
-        uint256 portalEnergyAdjustment;
-        uint256 maxLock = maxLockDuration;
 
         /// @dev Check the user account state based on lastUpdateTime
         /// @dev If this variable is 0, the user never staked and could not earn PE
         if (account.lastUpdateTime > 0) {
             /// @dev Calculate the Portal Energy earned since the last update
-            portalEnergyEarned = (account.stakedBalance *
-                (block.timestamp - account.lastUpdateTime) *
-                1e18);
+            uint256 portalEnergyEarned = stakedBalance * timePassed;
 
             /// @dev Calculate the gain of Portal Energy from maxLockDuration increase
-            portalEnergyIncrease = (account.stakedBalance *
-                (maxLock - account.lastMaxLockDuration) *
-                1e18);
+            uint256 portalEnergyIncrease = stakedBalance * maxLockDifference;
 
             /// @dev Summarize Portal Energy changes and divide by common denominator
             portalEnergyNetChange =
-                (portalEnergyEarned + portalEnergyIncrease) /
-                (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+                ((portalEnergyEarned + portalEnergyIncrease) * 1e18) /
+                denominator;
         }
 
         /// @dev Calculate the adjustment of Portal Energy from balance change
-        portalEnergyAdjustment =
-            ((_amount * maxLock) * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+        uint256 portalEnergyAdjustment = addedPE / denominator;
 
         /// @dev Calculate the amount of Portal Energy Tokens to be burned for unstaking the amount
-        portalEnergyTokensRequired = !_isPositiveAmount &&
+        portalEnergyTokensRequired = !isPositive &&
             portalEnergyAdjustment >
             (account.portalEnergy + portalEnergyNetChange)
             ? portalEnergyAdjustment -
@@ -272,21 +269,21 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         lastUpdateTime = block.timestamp;
 
         /// @dev Update the last maxLockDuration
-        lastMaxLockDuration = maxLock;
+        lastMaxLockDuration = maxLockDuration;
 
         /// @dev Update the user's staked balance and consider stake or unstake
-        stakedBalance = _isPositiveAmount
-            ? account.stakedBalance + _amount
-            : account.stakedBalance - _amount;
+        stakedBalance = isPositive
+            ? stakedBalance + amount
+            : stakedBalance - amount;
 
         /// @dev Update the user's max stake debt
         maxStakeDebt =
-            (stakedBalance * maxLock * 1e18) /
+            (stakedBalance * maxLockDuration * 1e18) /
             (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
 
         /// @dev Update the user's portalEnergy and account for stake or unstake
         /// @dev This will be 0 if Portal Energy Tokens must be burned
-        portalEnergy = _isPositiveAmount
+        portalEnergy = isPositive
             ? account.portalEnergy +
                 portalEnergyNetChange +
                 portalEnergyAdjustment
@@ -299,9 +296,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         availableToWithdraw = portalEnergy >= maxStakeDebt
             ? stakedBalance
             : (stakedBalance * portalEnergy) / maxStakeDebt;
-
-        /// @dev Set the user for the return values
-        user = _user;
     }
 
     /// @notice Update user data to the current state
@@ -379,7 +373,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         (
             ,
             ,
-            ,
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
@@ -418,7 +411,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Throws if caller tries to unstake more than stake balance
         /// @dev Will burn Portal Energy tokens if account has insufficient Portal Energy
         (
-            ,
             ,
             ,
             uint256 stakedBalance,
@@ -491,7 +483,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Get the current state of the user stake
         (
             ,
-            ,
             uint256 lastMaxLockDuation,
             uint256 stakedBalance,
             ,
@@ -526,7 +517,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     function redeemNFTposition(uint256 _tokenId) external {
         /// @dev Get the current state of the user Account
         (
-            ,
             ,
             ,
             uint256 stakedBalance,
@@ -638,7 +628,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Get the current state of user stake
         (
-            address user,
             ,
             ,
             uint256 stakedBalance,
@@ -665,7 +654,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         portalEnergy -= _amountInputPE;
 
         /// @dev Update the user stake struct
-        _updateAccount(user, stakedBalance, maxStakeDebt, portalEnergy);
+        _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
 
         /// @dev Instruct the Virtual LP to send PSM directly to the recipient
         virtualLP.PSM_sendToPortalUser(_recipient, amountReceived);
@@ -804,7 +793,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         /// @dev Get the current state of the user stake
         (
-            address user,
             ,
             ,
             uint256 stakedBalance,
@@ -823,7 +811,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         portalEnergy -= _amount;
 
         /// @dev Update the user stake struct
-        _updateAccount(user, stakedBalance, maxStakeDebt, portalEnergy);
+        _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
 
         /// @dev Mint portal energy tokens to the recipient's wallet
         portalEnergyToken.mint(_recipient, _amount);
