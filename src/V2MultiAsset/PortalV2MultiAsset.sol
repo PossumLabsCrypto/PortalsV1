@@ -482,7 +482,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Get the current state of the user stake
         (
             ,
-            uint256 lastMaxLockDuation,
+            uint256 lastMaxLockDuration,
             uint256 stakedBalance,
             ,
             uint256 portalEnergy,
@@ -500,7 +500,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev mint NFT to recipient containing the account information, get the returned ID
         uint256 nftID = portalNFT.mint(
             _recipient,
-            lastMaxLockDuation,
+            lastMaxLockDuration,
             stakedBalance,
             portalEnergy
         );
@@ -534,6 +534,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Update user Account
         stakedBalance += stakedBalanceNFT;
         portalEnergy += portalEnergyNFT;
+        maxStakeDebt = (stakedBalance * maxLockDuration * 1e18) / DENOMINATOR;
         _updateAccount(msg.sender, stakedBalance, maxStakeDebt, portalEnergy);
 
         /// @dev Emit event that the Portal NFT was redeemed
