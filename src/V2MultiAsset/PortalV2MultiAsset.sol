@@ -85,6 +85,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         PRINCIPAL_SYMBOL = _PRINCIPAL_SYMBOL;
         CREATION_TIME = block.timestamp;
         virtualLP = IVirtualLP(VIRTUAL_LP);
+        DENOMINATOR = SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT;
     }
 
     // ============================================
@@ -102,6 +103,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     uint256 public immutable CREATION_TIME; // time stamp of deployment
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
+    uint256 private immutable DENOMINATOR;
 
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
@@ -227,11 +229,10 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 amount = _amount; // to avoid stack too deep issue
         bool isPositive = _isPositiveAmount; // to avoid stack too deep issue
         uint256 portalEnergyNetChange;
-        uint256 denominator = SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT;
         uint256 timePassed = block.timestamp - account.lastUpdateTime;
         uint256 maxLockDifference = maxLockDuration -
             account.lastMaxLockDuration;
-        uint256 addedPE = amount * maxLockDuration * 1e18;
+        uint256 adjustedPE = amount * maxLockDuration * 1e18;
         stakedBalance = account.stakedBalance;
 
         /// @dev Check that the Stake Balance is sufficient for unstaking the amount
@@ -251,11 +252,11 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             /// @dev Summarize Portal Energy changes and divide by common denominator
             portalEnergyNetChange =
                 ((portalEnergyEarned + portalEnergyIncrease) * 1e18) /
-                denominator;
+                DENOMINATOR;
         }
 
         /// @dev Calculate the adjustment of Portal Energy from balance change
-        uint256 portalEnergyAdjustment = addedPE / denominator;
+        uint256 portalEnergyAdjustment = adjustedPE / DENOMINATOR;
 
         /// @dev Calculate the amount of Portal Energy Tokens to be burned for unstaking the amount
         portalEnergyTokensRequired = !isPositive &&
@@ -277,9 +278,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             : stakedBalance - amount;
 
         /// @dev Update the user's max stake debt
-        maxStakeDebt =
-            (stakedBalance * maxLockDuration * 1e18) /
-            (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
+        maxStakeDebt = (stakedBalance * maxLockDuration * 1e18) / DENOMINATOR;
 
         /// @dev Update the user's portalEnergy and account for stake or unstake
         /// @dev This will be 0 if Portal Energy Tokens must be burned
