@@ -85,7 +85,7 @@ contract PortalV2MultiAssetTest is Test {
     address psmSender = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
 
     // starting token amounts
-    uint256 usdcAmount = 1e13; // 10M USDC
+    uint256 usdcAmount = 1e12; // 1M USDC
     uint256 psmAmount = 1e25; // 10M PSM
     uint256 usdcSendAmount = 1e9; // 1k USDC
 
@@ -396,9 +396,9 @@ contract PortalV2MultiAssetTest is Test {
         assertEq(balanceBefore, balanceAfter);
     }
 
-    ////////////////////////////////////////////
-    //////////// END INTEGRATION ///////////////
-    ////////////////////////////////////////////
+    //////////////////////////////////////////
+    ////////// END INTEGRATION ///////////////
+    //////////////////////////////////////////
 
     // convert
     function testRevert_convert_I() public {
@@ -710,7 +710,7 @@ contract PortalV2MultiAssetTest is Test {
     function testRevert_getUpdateAccount() public {
         vm.startPrank(Alice);
         // Try to simulate a withdrawal greater than the available balance
-        vm.expectRevert(ErrorsLib.InsufficientToWithdraw.selector);
+        vm.expectRevert(ErrorsLib.InsufficientStakeBalance.selector);
         portal_USDC.getUpdateAccount(Alice, 100, false);
         vm.stopPrank();
     }
@@ -721,16 +721,15 @@ contract PortalV2MultiAssetTest is Test {
 
         vm.startPrank(Alice);
         (
-            address user,
             uint256 lastUpdateTime,
             uint256 lastMaxLockDuration,
             uint256 stakedBalance,
             uint256 maxStakeDebt,
             uint256 portalEnergy,
-            uint256 availableToWithdraw
+            uint256 availableToWithdraw,
+            uint256 portalEnergyTokensRequired
         ) = portal_USDC.getUpdateAccount(Alice, 0, true);
 
-        assertTrue(user == Alice);
         assertEq(lastUpdateTime, block.timestamp);
         assertEq(lastMaxLockDuration, portal_USDC.maxLockDuration());
         assertEq(stakedBalance, amount);
@@ -741,13 +740,17 @@ contract PortalV2MultiAssetTest is Test {
         );
         assertEq(portalEnergy, maxStakeDebt);
         assertEq(availableToWithdraw, amount);
+        assertEq(portalEnergyTokensRequired, 0);
 
         vm.stopPrank();
     }
 
     // stake
     function testRevert_stake_I() public {
-        // before Portal was registered
+        // After LP is activated but before Portal was registered
+        helper_fundLP();
+        helper_activateLP();
+
         vm.startPrank(Alice);
         usdc.approve(address(portal_USDC), 1e55);
         // Portal is not registered with the Virtual LP yet
@@ -899,83 +902,6 @@ contract PortalV2MultiAssetTest is Test {
         assertTrue(balanceAfter <= 1e18);
     }
 
-    // forceUnstakeAll
-    function testRevert_forceUnstakeAll() public {
-        testSuccess_stake_USDC();
-
-        // Try forceUnstakeAll with insufficient PE/ PE tokens
-        vm.startPrank(Alice);
-        portal_USDC.sellPortalEnergy(Alice, 1e5, 1, block.timestamp);
-        vm.expectRevert(); // bubbles up from ERC20
-        portal_USDC.forceUnstakeAll();
-        vm.stopPrank();
-
-        // Try forceUnstakeAll without a stake
-        vm.startPrank(Bob);
-        vm.expectRevert(ErrorsLib.EmptyAccount.selector);
-        portal_USDC.forceUnstakeAll();
-        vm.stopPrank();
-    }
-
-    function testSuccess_forceUnstakeAll() public {
-        helper_createPortalEnergyToken();
-        testSuccess_stake_USDC();
-
-        vm.warp(block.timestamp + 100);
-
-        vm.startPrank(Alice);
-        psm.approve(address(portal_USDC), 1e55);
-        portal_USDC.portalEnergyToken().approve(address(portal_USDC), 1e55);
-
-        (
-            ,
-            ,
-            ,
-            uint256 stakeBalanceBefore,
-            ,
-            uint256 peBalanceBefore,
-
-        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
-
-        portal_USDC.mintPortalEnergyToken(Alice, peBalanceBefore);
-        portal_USDC.buyPortalEnergy(Alice, 1e20, 1, block.timestamp);
-
-        uint256 interimBalancePeTokens = portal_USDC
-            .portalEnergyToken()
-            .balanceOf(Alice);
-
-        portal_USDC.forceUnstakeAll();
-        vm.stopPrank();
-
-        uint256 endBalancePeTokens = portal_USDC.portalEnergyToken().balanceOf(
-            Alice
-        );
-
-        (
-            ,
-            ,
-            ,
-            uint256 stakeBalanceAfter,
-            ,
-            uint256 peBalanceAfter,
-
-        ) = portal_USDC.getUpdateAccount(Alice, 0, true);
-
-        assertTrue(stakeBalanceBefore > 0);
-        assertEq(stakeBalanceAfter, 0);
-        assertTrue(peBalanceAfter != peBalanceBefore);
-        assertTrue(endBalancePeTokens < interimBalancePeTokens);
-    }
-
-    // quoteForceUnstakeAll
-    function testSuccess_quoteForceUnstakeAll() public {
-        testSuccess_stake_USDC();
-
-        uint256 amountToBurn = portal_USDC.quoteforceUnstakeAll(Alice);
-
-        assertEq(amountToBurn, 0);
-    }
-
     // create_portalNFT
     function testRevert_create_portalNFT() public {
         // after token has been deployed
@@ -1015,11 +941,11 @@ contract PortalV2MultiAssetTest is Test {
 
         (
             ,
-            ,
-            ,
+            uint256 lastMaxLockDurationBefore,
             uint256 stakeBalanceBefore,
             ,
             uint256 peBalanceBefore,
+            ,
 
         ) = portal_USDC.getUpdateAccount(Alice, 0, true);
 
@@ -1029,26 +955,30 @@ contract PortalV2MultiAssetTest is Test {
         (
             ,
             ,
-            ,
+            uint256 lastMaxLockDurationAfter,
             uint256 stakeBalanceAfter,
             ,
             uint256 peBalanceAfter,
 
         ) = portal_USDC.getUpdateAccount(Alice, 0, true);
 
+        assertTrue(lastMaxLockDurationBefore > 0);
         assertTrue(stakeBalanceBefore > 0);
         assertTrue(peBalanceBefore > 0);
+        assertEq(lastMaxLockDurationAfter, 0);
         assertEq(stakeBalanceAfter, 0);
         assertEq(peBalanceAfter, 0);
 
         (
             uint256 nftMintTime,
+            uint256 nftLastMaxLockDuration,
             uint256 nftStakedBalance,
             uint256 nftPortalEnergy
         ) = portal_USDC.portalNFT().accounts(1);
 
         assertTrue(address(portal_USDC.portalNFT()) != address(0));
         assertEq(nftMintTime, block.timestamp);
+        assertEq(nftLastMaxLockDuration, portal_USDC.maxLockDuration());
         assertEq(nftStakedBalance, stakeBalanceBefore);
         assertEq(nftPortalEnergy, peBalanceBefore);
     }
