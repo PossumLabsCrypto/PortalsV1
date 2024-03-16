@@ -534,8 +534,7 @@ contract VirtualLP is ReentrancyGuard {
         }
 
         /// @dev initialize helper variables
-        uint256 maxRewards = (bToken.totalSupply() *
-            FUNDING_MAX_RETURN_PERCENT) / 100;
+        uint256 maxRewards = bToken.totalSupply();
         uint256 newRewards = (AMOUNT_TO_CONVERT * FUNDING_REWARD_SHARE) / 100;
 
         /// @dev Check if rewards must be added, adjust reward pool accordingly
@@ -638,13 +637,13 @@ contract VirtualLP is ReentrancyGuard {
         /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
         fundingBalance -= withdrawAmount;
 
-        /// @dev Transfer the PSM tokens from the contract to the user
-        IERC20(PSM_ADDRESS).transfer(msg.sender, withdrawAmount);
-
         /// @dev Burn bTokens from the user
         bToken.burnFrom(msg.sender, _amountBtoken);
 
-        /// @dev Emit the FundingReceived event with the user address and the mintable amount
+        /// @dev Transfer the PSM tokens from the contract to the user
+        IERC20(PSM_ADDRESS).transfer(msg.sender, withdrawAmount);
+
+        /// @dev Emit an event that the user has withdrawn an amount of funding
         emit FundingWithdrawn(msg.sender, withdrawAmount);
     }
 
@@ -664,7 +663,7 @@ contract VirtualLP is ReentrancyGuard {
             FUNDING_APR) / (100 * SECONDS_PER_YEAR);
 
         /// @dev Calculate the maximum and current burn value
-        uint256 maxValue = (_amount * FUNDING_MAX_RETURN_PERCENT) / 100;
+        uint256 maxValue = _amount;
         uint256 currentValue = minValue + accruedValue;
 
         burnValue = (currentValue < maxValue) ? currentValue : maxValue;

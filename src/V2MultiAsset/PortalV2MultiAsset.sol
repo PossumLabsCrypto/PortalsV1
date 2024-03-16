@@ -673,7 +673,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInputPSM
     ) public view activeLP returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (input)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP) -
+            virtualLP.fundingRewardPool();
 
         /// @dev Calculate the reserve of portalEnergy (output)
         uint256 reserve1 = CONSTANT_PRODUCT / reserve0;
@@ -699,7 +700,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 _amountInputPE
     ) public view activeLP returns (uint256 amountReceived) {
         /// @dev Calculate the PSM token reserve (output)
-        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP);
+        uint256 reserve0 = IERC20(PSM_ADDRESS).balanceOf(VIRTUAL_LP) -
+            virtualLP.fundingRewardPool();
 
         /// @dev Calculate the reserve of portalEnergy (input)
         /// @dev Avoid zero value to prevent theoretical drainer attack by donating PSM before selling 1 PE
@@ -817,7 +819,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         portalEnergyToken.mint(_recipient, _amount);
 
         /// @dev Emit the event that the ERC20 representation has been minted to recipient
-        emit PortalEnergyMinted(address(msg.sender), _recipient, _amount);
+        emit PortalEnergyMinted(msg.sender, _recipient, _amount);
     }
 
     /// @notice Update the maximum lock duration up to the terminal value

@@ -13,4 +13,6 @@ interface IVirtualLP {
     ) external;
 
     function isActiveLP() external view returns (bool);
+
+    function fundingRewardPool() external view returns (uint256);
 }
