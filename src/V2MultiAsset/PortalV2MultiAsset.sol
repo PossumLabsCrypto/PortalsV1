@@ -24,7 +24,6 @@ error InactiveLP();
 error InsufficientBalance();
 error InsufficientReceived();
 error InsufficientStakeBalance();
-error InsufficientToWithdraw();
 error InvalidAddress();
 error InvalidAmount();
 error InvalidConstructor();
@@ -183,8 +182,6 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 maxStakeDebt,
         uint256 portalEnergy
     );
-
-    event MaxLockDurationUpdated(uint256 newDuration);
 
     // ============================================
     // ==               MODIFIERS                ==
@@ -844,7 +841,5 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         } else if (newValue > maxLockDuration) {
             maxLockDuration = newValue;
         }
-
-        emit MaxLockDurationUpdated(maxLockDuration);
     }
 }
