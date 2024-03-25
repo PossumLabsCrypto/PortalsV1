@@ -102,12 +102,12 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     uint256 public immutable CREATION_TIME; // time stamp of deployment
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
-    uint256 private immutable DENOMINATOR;
+    uint256 public immutable DENOMINATOR;
 
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
-    bool public portalEnergyTokenCreated; // flag for PE token deployment
-    bool public portalNFTcreated; // flag for Portal NFT contract deployment
+    bool portalEnergyTokenCreated; // flag for PE token deployment
+    bool portalNFTcreated; // flag for Portal NFT contract deployment
 
     address public immutable PRINCIPAL_TOKEN_ADDRESS; // address of the token accepted by the strategy as deposit
     string public NFT_META_DATA; // IPFS uri for Portal Position NFTs metadata
@@ -197,8 +197,9 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ==           STAKING & UNSTAKING          ==
     // ============================================
     /// @notice Simulate updating a user stake position and return the values without updating the struct
-    /// @dev Returns the simulated up-to-date user stake information
-    /// @dev Considers changes from staking or unstaking including burning amount of PE tokens
+    /// @dev Return the simulated up-to-date user stake information
+    /// @dev Consider changes from staking or unstaking including burning amount of PE tokens
+    /// @dev Attempt to burn Portal Energy Tokens if user unstakes more than available to withdraw
     /// @param _user The user whose stake position is to be updated
     /// @param _amount The amount to add or subtract from the user's stake position
     /// @param _isPositiveAmount True for staking (add), false for unstaking (subtract)

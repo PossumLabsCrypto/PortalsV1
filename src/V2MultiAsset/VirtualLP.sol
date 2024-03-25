@@ -12,7 +12,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 interface IWETH {
-    function withdrawTo(address _account, uint256 _amount) external;
+    function withdrawTo(address payable _account, uint256 _amount) external;
 }
 
 // ============================================
@@ -94,14 +94,14 @@ contract VirtualLP is ReentrancyGuard {
         115792089237316195423570985008687907853269984665640564039457584007913129639935;
 
     address public owner;
-    uint256 private constant OWNER_DURATION = 31536000; // 1 Year
+    uint256 private constant OWNER_DURATION = 172800; // 172800 = 2 days // 777600 = 9 days
     uint256 public immutable OWNER_EXPIRY_TIME; // Time required to pass before owner can be revoked
     uint256 public immutable AMOUNT_TO_CONVERT; // fixed amount of PSM tokens required to withdraw yield in the contract
     uint256 public immutable FUNDING_PHASE_DURATION; // seconds after deployment before Portal can be activated
     uint256 public immutable FUNDING_MIN_AMOUNT; // minimum funding required before Portal can be activated
     uint256 public immutable CREATION_TIME; // time stamp of deployment
 
-    uint256 public constant FUNDING_APR = 36; // annual redemption value increase (APR) of bTokens
+    uint256 public constant FUNDING_APR = 48; // annual redemption value increase (APR) of bTokens
     uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
 
@@ -270,7 +270,7 @@ contract VirtualLP is ReentrancyGuard {
     /// @param _amount The amount of assets to withdraw
     function withdrawFromYieldSource(
         address _asset,
-        address _user,
+        address payable _user,
         uint256 _amount
     ) external registeredPortal {
         /// @dev Calculate number of Vault Shares that equal the withdraw amount
