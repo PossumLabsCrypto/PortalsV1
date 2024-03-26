@@ -40,14 +40,21 @@ error OwnerRevoked();
 /// @author Possum Labs
 /** @notice This contract serves as the shared, virtual LP for multiple Portals
  * Each Portal must be registered by the owner
- * The contract is owned for a predetermined duration to enable registering more Portals
- * Registering more Portals must be permissioned because it can be malicious
+ * The contract is owned for a predetermined duration to enable registering Portals
+ * Registering Portals must be permissioned because it can be malicious
  * Portals cannot be removed from the registry to guarantee Portal integrity
  * The full amount of PSM inside the LP is available to provide upfront yield for each Portal
  * Capital staked through the connected Portals is redirected and staked in an external yield source
- * The LP is refilled by convert() calls which exchanges ERC20 balances for PSM
+ * Yield is claimed and collected with this contract
+ * The contract can receive PSM tokens during the funding phase and issues bTokens as receipt
+ * bTokens received during the funding phase are used to initialize the internal LP
+ * bTokens can be redeemed against the fundingRewardPool which consists of PSM tokens
+ * The fundingRewardPool is filled over time by taking a 10% cut from the Converter
+ * The Converter is an arbitrage mechanism that allows anyone to sweep the contract balance of a token
+ * When triggering the Converter, the caller (arbitrager) must send a fixed amount of PSM tokens to the contract
+ * Setup Process: 1. deploy VirtualLP, 2. deploy Portals, 3. register Portals in VirtualLP
+ * 4. mint tokens, 5. increase allowances, 6. activate LP after funding concluded
  */
-/// @dev Setup Process: 1. Deploy VirtualLP, 2. Deploy Portals, 3. Register Portals in VirtualLP 4. Activate LP
 contract VirtualLP is ReentrancyGuard {
     constructor(
         address _owner,
@@ -103,7 +110,7 @@ contract VirtualLP is ReentrancyGuard {
 
     uint256 public constant FUNDING_APR = 48; // annual redemption value increase (APR) of bTokens
     uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
-    uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until investors are paid back
+    uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until funders are paid back
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
@@ -496,9 +503,11 @@ contract VirtualLP is ReentrancyGuard {
     /// @dev This function handles the conversion of tokens inside the contract for PSM tokens
     /// @dev Collect rewards for funders and reallocate reward overflow to the LP (indirect)
     /// @dev Transfer the input (PSM) token from the caller to the contract
-    /// @dev Transfer the specified output token from the contract to the caller
+    /// @dev Transfer the specified output token from the contract to the recipient
     /// @param _token The token to be obtained by the recipient
+    /// @param _minReceived The receiving address of the output
     /// @param _minReceived The minimum amount of tokens received
+    /// @param _deadline The timestamp until the transaction is valid
     function convert(
         address _token,
         address _recipient,
@@ -570,8 +579,8 @@ contract VirtualLP is ReentrancyGuard {
     // ==                FUNDING                 ==
     // ============================================
     /// @notice End the funding phase and enable normal contract functionality
-    /// @dev This function activates the Virtual LP
-    /// @dev Can only be called when the Virtual LP is inactive
+    /// @dev This function ends the funding phase and activates the Virtual LP
+    /// @dev Can only be called once
     function activateLP() external inactiveLP {
         /// @dev Check that the funding phase is over and enough funding has been contributed
         if (block.timestamp < CREATION_TIME + FUNDING_PHASE_DURATION) {
@@ -619,7 +628,6 @@ contract VirtualLP is ReentrancyGuard {
 
     /// @notice Allow users to burn bTokens to recover PSM funding before the Virtual LP is activated
     /// @dev This function allows users to burn bTokens during the funding phase of the contract to get back PSM
-    /// @dev The bToken must have been deployed via the contract in advance
     /// @dev Decrease the fundingBalance tracker by the amount of PSM withdrawn
     /// @dev Burn the appropriate amount of bTokens from the caller
     /// @dev Transfer the PSM tokens from the contract to the caller
