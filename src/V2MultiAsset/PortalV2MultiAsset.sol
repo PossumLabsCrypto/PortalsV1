@@ -99,7 +99,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
     uint256 public immutable CREATION_TIME; // time stamp of deployment
     uint256 public immutable DECIMALS_ADJUSTMENT; // scaling factor to account for the decimals of the principal token
-    uint256 public immutable DENOMINATOR;
+    uint256 public immutable DENOMINATOR; // used in calculations around earning Portal Energy
 
     MintBurnToken public portalEnergyToken; // the ERC20 representation of portalEnergy
     PortalNFT public portalNFT; // The NFT contract deployed by the Portal that can store accounts
@@ -131,6 +131,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
     // ============================================
     // ==                EVENTS                  ==
     // ============================================
+    event maxLockDurationUpdated(uint256 newDuration);
+
     // --- Events related to internal exchange PSM vs. portalEnergy ---
     event PortalEnergyBuyExecuted(
         address indexed caller,
@@ -841,5 +843,8 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         } else if (newValue > maxLockDuration) {
             maxLockDuration = newValue;
         }
+
+        /// @dev Emit the event with the updated duration
+        emit maxLockDurationUpdated(maxLockDuration);
     }
 }
