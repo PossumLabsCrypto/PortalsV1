@@ -343,7 +343,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
             /// @dev Send WETH to virtual LP
             IERC20(WETH_ADDRESS).transfer(VIRTUAL_LP, _amount);
         } else {
-            /// @dev If not native ETH, transfer principal token to contract
+            /// @dev If not native ETH, transfer principal token to virtual LP
             /// @dev Prevent contract from receiving ETH when principal is ERC20
             if (msg.value > 0) {
                 revert NativeTokenNotAllowed();
@@ -426,7 +426,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         /// @dev Withdraw the assets from external Protocol and send to user
         virtualLP.withdrawFromYieldSource(
             PRINCIPAL_TOKEN_ADDRESS,
-            msg.sender,
+            payable(msg.sender),
             _amount
         );
 

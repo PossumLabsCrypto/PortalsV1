@@ -3,8 +3,6 @@ pragma solidity =0.8.19;
 
 import {MintBurnToken} from "./MintBurnToken.sol";
 import {IWater} from "./interfaces/IWater.sol";
-import {ISingleStaking} from "./interfaces/ISingleStaking.sol";
-import {IDualStaking} from "./interfaces/IDualStaking.sol";
 import {IPortalV2MultiAsset} from "./interfaces/IPortalV2MultiAsset.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -81,6 +79,7 @@ contract VirtualLP is ReentrancyGuard {
         AMOUNT_TO_CONVERT = _AMOUNT_TO_CONVERT;
         FUNDING_PHASE_DURATION = _FUNDING_PHASE_DURATION;
         FUNDING_MIN_AMOUNT = _FUNDING_MIN_AMOUNT;
+        FUNDING_REWARD = _AMOUNT_TO_CONVERT * FUNDING_REWARD_SHARE;
 
         owner = _owner;
         OWNER_EXPIRY_TIME = OWNER_DURATION + block.timestamp;
@@ -111,15 +110,18 @@ contract VirtualLP is ReentrancyGuard {
     uint256 public constant FUNDING_APR = 48; // annual redemption value increase (APR) of bTokens
     uint256 public constant FUNDING_MAX_RETURN_PERCENT = 1000; // maximum redemption value percent of bTokens (must be >100)
     uint256 public constant FUNDING_REWARD_SHARE = 10; // 10% of yield goes to the funding pool until funders are paid back
+    uint256 immutable FUNDING_REWARD; // The token amount transferred to the reward Pool when calling convert
 
     address constant WETH_ADDRESS = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5; // address of PSM token
 
-    address public constant SINGLE_STAKING =
-        0x314223E2fA375F972E159002Eb72A96301E99e22;
-    address public constant DUAL_STAKING =
-        0x31Fa38A6381e9d1f4770C73AB14a0ced1528A65E;
-    address public constant esVKA = 0x95b3F9797077DDCa971aB8524b439553a220EB2A;
+    // Vaultka lending vault addresses (= vault shares)
+    address constant USDCE_WATER = 0x806e8538FC05774Ea83d9428F778E423F6492475;
+    address constant USDC_WATER = 0x9045ae36f963b7184861BDce205ea8B08913B48c;
+    address constant ARB_WATER = 0x175995159ca4F833794C88f7873B3e7fB12Bb1b6;
+    address constant WBTC_WATER = 0x4e9e41Bbf099fE0ef960017861d181a9aF6DDa07;
+    address constant WETH_WATER = 0x8A98929750e6709Af765F976c6bddb5BfFE6C06c;
+    address constant LINK_WATER = 0xFF614Dd6fC857e4daDa196d75DaC51D522a2ccf7;
 
     bool public isActiveLP; // Will be set to true when funding phase ends
     bool public bTokenCreated; // flag for bToken deployment
@@ -129,8 +131,6 @@ contract VirtualLP is ReentrancyGuard {
     mapping(address portal => bool isRegistered) public registeredPortals;
     mapping(address portal => mapping(address asset => address vault))
         public vaults;
-    mapping(address portal => mapping(address asset => uint256 pid))
-        public poolID;
 
     // ============================================
     // ==                EVENTS                  ==
@@ -150,8 +150,6 @@ contract VirtualLP is ReentrancyGuard {
         uint256 amountBurned,
         uint256 amountReceived
     );
-
-    event RewardsClaimed(address indexed portal, uint256 timeStamp);
 
     // ============================================
     // ==               MODIFIERS                ==
@@ -208,19 +206,16 @@ contract VirtualLP is ReentrancyGuard {
     /// @param _portal The address of the Portal to register
     /// @param _asset The address of the principal token of the Portal
     /// @param _vault The address of the staking Vault used by the Portal in the external protocol
-    /// @param _pid The pool identifier of the staking Vault, relevant for the SingleStaking contract
     function registerPortal(
         address _portal,
         address _asset,
-        address _vault,
-        uint256 _pid
+        address _vault
     ) external onlyOwner {
         ///@dev register Portal so that it can call protected functions
         registeredPortals[_portal] = true;
 
-        /// @dev update the Portal asset mappings
+        /// @dev update the Portal asset mapping
         vaults[_portal][_asset] = _vault;
-        poolID[_portal][_asset] = _pid;
     }
 
     /// @notice This function disables the ownership access
@@ -256,17 +251,7 @@ contract VirtualLP is ReentrancyGuard {
 
         /// @dev Deposit tokens into Vault to receive Shares (WATER)
         /// @dev Approval of token spending is handled with a separate function to save gas
-        uint256 depositShares = IWater(vaults[msg.sender][_asset]).deposit(
-            _amount,
-            address(this)
-        );
-
-        /// @dev Stake the Vault Shares into the staking contract using the pool identifier (pid)
-        /// @dev Approval of token spending is handled with a separate function to save gas
-        ISingleStaking(SINGLE_STAKING).deposit(
-            poolID[msg.sender][_asset],
-            depositShares
-        );
+        IWater(vaults[msg.sender][_asset]).deposit(_amount, address(this));
     }
 
     /// @notice Withdraw principal from the yield source to the user
@@ -292,12 +277,6 @@ contract VirtualLP is ReentrancyGuard {
         uint256 balanceBefore;
         uint256 balanceAfter;
 
-        /// @dev Withdraw Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(
-            poolID[msg.sender][_asset],
-            withdrawShares
-        );
-
         /// @dev Check if handling ETH, withdraw as WETH
         address tokenAdr = (_asset == address(0)) ? WETH_ADDRESS : _asset;
 
@@ -322,31 +301,6 @@ contract VirtualLP is ReentrancyGuard {
         }
     }
 
-    /// @notice Claim pending esVKA and USDC rewards, then restake esVKA
-    /// @dev Claim protocol rewards for a specific Portal and restake esVKA
-    /// @param _portal The address of a registered Portal
-    function claimProtocolRewards(address _portal) external {
-        /// @dev Get the asset of the Portal
-        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
-
-        /// @dev Claim esVKA rewards from staking the Vault Shares
-        ISingleStaking(SINGLE_STAKING).deposit(poolID[_portal][asset], 0);
-
-        uint256 esVKABalance = IERC20(esVKA).balanceOf(address(this));
-
-        /// @dev Stake esVKA into the Dual Staking contract
-        /// @dev Approval of token spending is handled with a separate function to save gas
-        if (esVKABalance > 0) {
-            IDualStaking(DUAL_STAKING).stake(esVKABalance, esVKA);
-        }
-
-        /// @dev Claim esVKA and USDC from DualStaking, stake the esVKA reward and receive USDC to contract
-        IDualStaking(DUAL_STAKING).compound();
-
-        /// @dev Emit the event that rewards have been claimed
-        emit RewardsClaimed(_portal, block.timestamp);
-    }
-
     /// @notice Internal function to get Vault profit before withdrawal fees
     /// @dev Get the surplus assets in the Vault excluding withdrawal fee
     /// @param _portal The address of a registered Portal
@@ -358,8 +312,7 @@ contract VirtualLP is ReentrancyGuard {
         address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
 
         /// @dev Get the Vault shares owned by Portal
-        uint256 sharesOwned = ISingleStaking(SINGLE_STAKING).getUserAmount(
-            poolID[_portal][asset],
+        uint256 sharesOwned = IERC20(vaults[_portal][asset]).balanceOf(
             address(this)
         );
 
@@ -412,47 +365,11 @@ contract VirtualLP is ReentrancyGuard {
             revert NoProfit();
         }
 
-        /// @dev Withdraw the surplus Vault Shares from Single Staking Contract
-        ISingleStaking(SINGLE_STAKING).withdraw(poolID[_portal][asset], shares);
-
         /// @dev Withdraw the profit Assets from the Vault to contract (collect WETH from ETH Vault)
         IWater(vaults[_portal][asset]).withdraw(
             profit,
             address(this),
             address(this)
-        );
-    }
-
-    /// @notice Read the pending USDC protocol rewards earned by the LP contract
-    /// @dev Get current USDC rewards pending from protocol fees
-    function getPendingRewardsUSDC() external view returns (uint256 rewards) {
-        rewards = IDualStaking(DUAL_STAKING).pendingRewardsUSDC(address(this));
-    }
-
-    /// @notice Read the timelock value of a Vault used by a specific Portal
-    /// @dev Get the timelock of a Vault used by a Portal
-    /// @param _portal The address of a registered Portal
-    function getPortalVaultLockTime(
-        address _portal
-    ) external view returns (uint256 lockTime) {
-        /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
-
-        lockTime = IWater(vaults[_portal][asset]).lockTime();
-    }
-
-    /// @notice This function allows to update the Boost Multiplier to earn more esVKA
-    /// @dev Update the Boost Multiplier of a Vault used by a specific Portal
-    /// @param _portal The address of a registered Portal
-    function updatePortalBoostMultiplier(address _portal) public {
-        /// @dev Get the asset of the Portal
-        IPortalV2MultiAsset portal = IPortalV2MultiAsset(_portal);
-        address asset = portal.PRINCIPAL_TOKEN_ADDRESS();
-
-        ISingleStaking(SINGLE_STAKING).updateBoostMultiplier(
-            address(this),
-            poolID[_portal][asset]
         );
     }
 
@@ -476,26 +393,6 @@ contract VirtualLP is ReentrancyGuard {
         );
     }
 
-    /// @notice This function increases spending allowance for Vault Shares by the SingleStaking contract
-    /// @dev Increase the token spending allowance of Vault Shares by the Single Staking contract
-    /// @param _portal The address of a registered Portal
-    function increaseAllowanceSingleStaking(address _portal) public {
-        /// @dev Get the asset of the Portal
-        address asset = IPortalV2MultiAsset(_portal).PRINCIPAL_TOKEN_ADDRESS();
-
-        /// @dev Allow spending of Vault Shares of a Portal by the single staking contract
-        IERC20(vaults[_portal][asset]).safeIncreaseAllowance(
-            SINGLE_STAKING,
-            MAX_UINT
-        );
-    }
-
-    /// @notice This function increases spending allowance for esVKA by the DualStaking contract
-    /// @dev Increase the token spending allowance of esVKA by the DualStaking contract
-    function increaseAllowanceDualStaking() public {
-        IERC20(esVKA).safeIncreaseAllowance(DUAL_STAKING, MAX_UINT);
-    }
-
     // ============================================
     // ==              PSM CONVERTER             ==
     // ============================================
@@ -515,7 +412,16 @@ contract VirtualLP is ReentrancyGuard {
         uint256 _deadline
     ) external nonReentrant activeLP {
         /// @dev Check the validity of token and recipient addresses
-        if (_token == PSM_ADDRESS || _recipient == address(0)) {
+        if (
+            _token == PSM_ADDRESS ||
+            _token == USDCE_WATER ||
+            _token == USDC_WATER ||
+            _token == ARB_WATER ||
+            _token == WBTC_WATER ||
+            _token == WETH_WATER ||
+            _token == LINK_WATER ||
+            _recipient == address(0)
+        ) {
             revert InvalidAddress();
         }
 
@@ -544,16 +450,17 @@ contract VirtualLP is ReentrancyGuard {
 
         /// @dev initialize helper variables
         uint256 maxRewards = bToken.totalSupply();
-        uint256 newRewards = (AMOUNT_TO_CONVERT * FUNDING_REWARD_SHARE) / 100;
 
         /// @dev Check if rewards must be added, adjust reward pool accordingly
-        if (fundingRewardPool + newRewards >= maxRewards) {
+        /// @dev This indirectly re-allocates spillover rewards to the LP
+        /// @dev Spillover can occur if bTokens get burned via the token contract instead of redeemed in LP
+        if (fundingRewardPool + FUNDING_REWARD >= maxRewards) {
             fundingRewardPool = maxRewards;
         } else {
-            fundingRewardPool += newRewards;
+            fundingRewardPool += FUNDING_REWARD;
         }
 
-        /// @dev transfer PSM to the LP
+        /// @dev transfer PSM from the caller to the LP
         IERC20(PSM_ADDRESS).transferFrom(
             msg.sender,
             address(this),
