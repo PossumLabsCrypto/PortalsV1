@@ -8,7 +8,10 @@ error NotOwnerOfNFT();
 contract PortalNFT is ERC721URIStorage {
     constructor(uint256 _decimalsAdjustment,string memory _name,string memory _symbol,string memory _metadataURI
     ) ERC721(_name, _symbol) {
-        OWNER = msg.sender;DECIMALS_ADJUSTMENT = _decimalsAdjustment;metadataURI = _metadataURI;portal = IPortalV2MultiAsset(msg.sender);}
+        OWNER = msg.sender;
+        DECIMALS_ADJUSTMENT = _decimalsAdjustment;
+        metadataURI = _metadataURI;
+        portal = IPortalV2MultiAsset(msg.sender);}
     IPortalV2MultiAsset public portal;
     address private immutable OWNER;
     struct AccountNFT {
@@ -35,11 +38,7 @@ contract PortalNFT is ERC721URIStorage {
         account.portalEnergy += (portalEnergyEarned + portalEnergyIncrease) / (SECONDS_PER_YEAR * DECIMALS_ADJUSTMENT);
         stakedBalance = account.stakedBalance;
         portalEnergy = account.portalEnergy;}
-    function mint(
-        address _recipient,
-        uint256 _lastMaxLockDuration,
-        uint256 _stakedBalance,
-        uint256 _portalEnergy
+    function mint(address _recipient,uint256 _lastMaxLockDuration,uint256 _stakedBalance,uint256 _portalEnergy
     ) external onlyOwner returns (uint256 nftID) {
         totalSupply++;
         _safeMint(_recipient, totalSupply);
@@ -51,10 +50,7 @@ contract PortalNFT is ERC721URIStorage {
         account.portalEnergy = _portalEnergy;
         accounts[totalSupply] = account;
         nftID = totalSupply;}
-    function redeem(
-        address ownerOfNFT,
-        uint256 _tokenId
-    ) external onlyOwner returns (uint256 stakedBalance, uint256 portalEnergy) {
+    function redeem(address ownerOfNFT,uint256 _tokenId) external onlyOwner returns (uint256 stakedBalance, uint256 portalEnergy) {
         if (ownerOfNFT != _ownerOf(_tokenId)) {
             revert NotOwnerOfNFT();}
         (stakedBalance, portalEnergy) = getAccount(_tokenId);

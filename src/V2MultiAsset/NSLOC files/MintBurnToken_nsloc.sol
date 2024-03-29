@@ -7,7 +7,8 @@ error NotOwner();
 contract MintBurnToken is ERC20, ERC20Burnable, ERC20Permit {
     address public immutable OWNER;
     constructor(string memory name,string memory symbol
-    ) ERC20(name, symbol) ERC20Permit(name) {
+    ) ERC20(name, symbol) 
+    ERC20Permit(name) {
         OWNER = msg.sender;}
     modifier onlyOwner() {
         if (msg.sender != OWNER) {
