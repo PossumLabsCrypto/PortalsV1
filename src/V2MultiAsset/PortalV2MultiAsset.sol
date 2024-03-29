@@ -677,6 +677,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
         uint256 reserve1 = CONSTANT_PRODUCT / reserve0;
 
         /// @dev Reduce amount by the LP Protection Hurdle to mitigate sandwich attacks on convert()
+        /// @dev This fee mitigates value extraction on convert(), excluding unrealistic edge cases
         _amountInputPSM =
             (_amountInputPSM * (100 - LP_PROTECTION_HURDLE)) /
             100;
