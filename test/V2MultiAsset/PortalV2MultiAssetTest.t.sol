@@ -9,8 +9,6 @@ import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IWater} from "src/V2MultiAsset/interfaces/IWater.sol";
-import {ISingleStaking} from "src/V2MultiAsset/interfaces/ISingleStaking.sol";
-import {IDualStaking} from "src/V2MultiAsset/interfaces/IDualStaking.sol";
 import {IPortalV2MultiAsset} from "src/V2MultiAsset/interfaces/IPortalV2MultiAsset.sol";
 
 contract PortalV2MultiAssetTest is Test {
@@ -168,8 +166,7 @@ contract PortalV2MultiAssetTest is Test {
         virtualLP.registerPortal(
             address(portal_USDC),
             _PRINCIPAL_TOKEN_ADDRESS_USDC,
-            USDC_WATER,
-            _POOL_ID_USDC
+            USDC_WATER
         );
     }
 
@@ -179,8 +176,7 @@ contract PortalV2MultiAssetTest is Test {
         virtualLP.registerPortal(
             address(portal_ETH),
             _PRINCIPAL_TOKEN_ADDRESS_ETH,
-            WETH_WATER,
-            _POOL_ID_WETH
+            WETH_WATER
         );
     }
 
@@ -211,15 +207,11 @@ contract PortalV2MultiAssetTest is Test {
 
     // Increase allowance of tokens used by the USDC Portal
     function helper_setApprovalsInLP_USDC() public {
-        virtualLP.increaseAllowanceDualStaking();
-        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
         virtualLP.increaseAllowanceVault(address(portal_USDC));
     }
 
     // Increase allowance of tokens used by the ETH Portal
     function helper_setApprovalsInLP_ETH() public {
-        virtualLP.increaseAllowanceDualStaking();
-        virtualLP.increaseAllowanceSingleStaking(address(portal_ETH));
         virtualLP.increaseAllowanceVault(address(portal_ETH));
     }
 
@@ -252,17 +244,16 @@ contract PortalV2MultiAssetTest is Test {
         // caller is not owner
         vm.startPrank(Alice);
         vm.expectRevert(ErrorsLib.NotOwner.selector);
-        virtualLP.registerPortal(Alice, Bob, Karen, 23);
+        virtualLP.registerPortal(Alice, Bob, Karen);
         vm.stopPrank();
     }
 
     function testSuccess_registerPortal() public {
         vm.prank(psmSender);
-        virtualLP.registerPortal(Alice, Bob, Karen, 23);
+        virtualLP.registerPortal(Alice, Bob, Karen);
 
         assertTrue(virtualLP.registeredPortals(Alice) == true);
         assertTrue(virtualLP.vaults(Alice, Bob) == Karen);
-        assertTrue(virtualLP.poolID(Alice, Bob) == 23);
     }
 
     // removeOwner
@@ -333,20 +324,12 @@ contract PortalV2MultiAssetTest is Test {
 
         usdc.approve(address(virtualLP), 1e55);
         virtualLP.increaseAllowanceVault(address(portal_USDC));
-        virtualLP.increaseAllowanceSingleStaking(address(portal_USDC));
-        virtualLP.increaseAllowanceDualStaking();
 
         virtualLP.depositToYieldSource(address(usdc), amount);
         vm.stopPrank();
 
         // Check that stake was processed correctly in Vault and staking contract
-        uint256 depositShares = IWater(USDC_WATER).convertToShares(amount);
-        uint256 stakedShares = ISingleStaking(SINGLE_STAKING).getUserAmount(
-            _POOL_ID_USDC,
-            address(virtualLP)
-        );
         assertEq(usdc.balanceOf(address(portal_USDC)), 0);
-        assertEq(depositShares, stakedShares);
     }
 
     // withdrawFromYieldSource
@@ -372,28 +355,6 @@ contract PortalV2MultiAssetTest is Test {
         virtualLP.withdrawFromYieldSource(address(usdc), Alice, amount);
 
         assertEq(usdc.balanceOf(Alice), balanceAliceStart + netReceived);
-    }
-
-    // claimProtocolRewards
-    function testRevert_claimProtocolRewards() public {
-        testSuccess_depositToYieldSource();
-
-        vm.expectRevert();
-        virtualLP.claimProtocolRewards(Alice); // wrong address
-    }
-
-    function testSuccess_claimProtocolRewards() public {
-        testSuccess_depositToYieldSource();
-
-        uint256 balanceBefore = usdc.balanceOf(address(portal_USDC));
-
-        vm.warp(block.timestamp + 100);
-        virtualLP.claimProtocolRewards(address(portal_USDC));
-
-        uint256 balanceAfter = usdc.balanceOf(address(portal_USDC));
-
-        // Tx goes through even if no USDC rewards are claimed to ensure esVKA rewards are compounded
-        assertEq(balanceBefore, balanceAfter);
     }
 
     //////////////////////////////////////////
@@ -913,12 +874,10 @@ contract PortalV2MultiAssetTest is Test {
 
     function testSuccess_create_portalNFT() public {
         assertTrue(address(portal_USDC.portalNFT()) == address(0));
-        assertTrue(portal_USDC.portalNFTcreated() == false);
 
         portal_USDC.create_portalNFT();
 
         assertTrue(address(portal_USDC.portalNFT()) != address(0));
-        assertTrue(portal_USDC.portalNFTcreated() == true);
     }
 
     // mintNFTposition
@@ -1190,12 +1149,10 @@ contract PortalV2MultiAssetTest is Test {
 
     function testSuccess_create_portalEnergyToken() public {
         assertTrue(address(portal_USDC.portalEnergyToken()) == address(0));
-        assertTrue(portal_USDC.portalEnergyTokenCreated() == false);
 
         portal_USDC.create_portalEnergyToken();
 
         assertTrue(address(portal_USDC.portalEnergyToken()) != address(0));
-        assertTrue(portal_USDC.portalEnergyTokenCreated() == true);
         assertEq(portal_USDC.portalEnergyToken().name(), "PE-USD Coin"); // This implicitely tests concatenate()
         assertEq(portal_USDC.portalEnergyToken().symbol(), "PE-USDC"); // This implicitely tests concatenate()
     }
