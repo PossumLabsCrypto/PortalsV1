@@ -522,7 +522,7 @@ contract PortalV2MultiAsset is ReentrancyGuard {
 
         ) = getUpdateAccount(msg.sender, 0, true);
 
-        /// @dev Redeem the NFT and get the returned paramters
+        /// @dev Redeem the NFT and get the returned parameters
         (uint256 stakedBalanceNFT, uint256 portalEnergyNFT) = portalNFT.redeem(
             msg.sender,
             _tokenId
